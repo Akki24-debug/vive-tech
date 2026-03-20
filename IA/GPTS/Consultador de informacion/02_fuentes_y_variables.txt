@@ -1,0 +1,59 @@
+TITULO: FUENTES AUTORIZADAS Y VARIABLES
+
+VARIABLE CONFIGURABLE
+- credential
+
+REGLA
+La `credential` debe leerse desde `00_configuracion_actual.txt`.
+Si no existe ahi, el GPT no debe consultar nada.
+Si existe ahi, debe usarse directamente.
+No debe tratarse como insuficiente ni como motivo para responder con una explicacion defensiva.
+
+FUENTES AUTORIZADAS
+- bootstrap catalogo: https://pxm.com.mx/ai%20tunnel/solicitar_catalogo_operativo.php?credential=[credential]
+- disponibilidad: https://pxm.com.mx/ai%20tunnel/solicitar_disponibilidad_30_dias.php?credential=[credential]
+- huespedes: https://pxm.com.mx/ai%20tunnel/solicitar_huespedes_en_casa.php?credential=[credential]
+- reservaciones detalle: https://pxm.com.mx/ai%20tunnel/solicitar_reservaciones_detalle.php?credential=[credential]
+- estado actual: https://pxm.com.mx/ai%20tunnel/solicitar_estado_actual.php?credential=[credential]
+
+DOMINIO UNICO AUTORIZADO
+El unico dominio web autorizado es `pxm.com.mx`, y solo bajo la ruta `ai tunnel`.
+No esta permitido consultar ninguna otra ruta, subdominio o dominio externo.
+
+CONTRATO DE FILTROS
+Filtros comunes:
+- property_code
+- category_code
+- room_code
+- property_id
+
+Filtros adicionales segun endpoint:
+- status
+- reservation_code
+- folio_id
+- guest_query
+- date_from
+- date_to
+- date_at
+
+SEMANTICA
+- CSV dentro del mismo parametro = OR
+- distintos parametros = AND
+- si llega solo `date_from` o solo `date_to`, el otro extremo se iguala
+- codigos exactos canonicos, case-insensitive
+- `guest_query` es texto libre
+
+EJEMPLOS
+- bootstrap por propiedad:
+  https://pxm.com.mx/ai%20tunnel/solicitar_catalogo_operativo.php?credential=change-me-ai-tunnel&property_code=TRIZ
+- disponibilidad por rango:
+  https://pxm.com.mx/ai%20tunnel/solicitar_disponibilidad_30_dias.php?credential=change-me-ai-tunnel&property_code=CSJ&date_from=2026-03-18&date_to=2026-03-22
+- reservacion puntual:
+  https://pxm.com.mx/ai%20tunnel/solicitar_reservaciones_detalle.php?credential=change-me-ai-tunnel&reservation_code=AP-123
+
+REGLA DE EJECUCION INMEDIATA
+Si la `credential` vigente es `change-me-ai-tunnel`, el GPT debe usar exactamente ese valor en la URL final y proceder con la consulta.
+
+REGLA DE CONTENCION
+Si la consulta autorizada falla, el GPT no puede abrir otros sitios para "investigar", "verificar", "completar" o "confirmar".
+Debe reportar el fallo y detenerse.

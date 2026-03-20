@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Actividades | Vive la Vibe</title>
+  <link rel="stylesheet" href="./page.css" />
+  <script src="./credentials.js" defer></script>
+  <script src="./resources.js" defer></script>
+  <script src="./texts.js" defer></script>
+  <script src="./cart.js" defer></script>
+  <script src="./theme.js" defer></script>
+  <script src="./page-activities.js" defer></script>
+</head>
+<body>
+  <header class="page-header">
+    <nav class="nav" aria-label="Principal">
+      <a class="logo" href="./index.html" aria-label="Inicio">
+        <img id="actLogoImg" alt="Vive la Vibe" />
+        <span id="actLogoText"></span>
+      </a>
+      <div class="spacer"></div>
+      <div class="menu">
+        <a id="actNavActivities" class="active" href="./actividades.html"></a>
+        <a id="actNavLodgings" href="./index.html#lodgings"></a>
+        <a id="actNavContact" href="./contacto.html"></a>
+        <a id="actNavCTA" class="cta" href="./index.html#bookerCard"></a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero hero-spotlight">
+      <div class="hero-spotlight_inner">
+        <div class="hero-spotlight_info">
+          <h1 id="activitiesHeroTitle"></h1>
+          <p id="activitiesHeroSubtitle"></p>
+          <p id="activitiesHeroDescription"></p>
+          <div class="hero-actions">
+            <button id="activitiesPrimaryCta" class="btn-primary" type="button"></button>
+            <a id="activitiesSecondaryCta" class="btn-ghost" href="#"></a>
+          </div>
+        </div>
+        <div class="hero-spotlight_showcase">
+          <div class="hero-spotlight_heading">
+            <span class="featured-tag" id="featuredTag">Seleccion VIBE</span>
+            <p class="featured-description" id="featuredDescription">Las experiencias favoritas de nuestros viajeros.</p>
+          </div>
+          <div class="featured-list" id="featuredShowcase"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="toursSection">
+      <div class="section-inner">
+        <div class="section-header">
+          <h2 id="toursHeading"></h2>
+          <p id="toursDescription"></p>
+        </div>
+        <div class="activities-carousel activities-page-carousel">
+          <div class="activities-track" id="toursTrack" aria-live="polite"></div>
+          <div class="activities-nav">
+            <button type="button" class="activities-arrow" id="toursPrev" aria-label="Anterior">&#10094;</button>
+            <button type="button" class="activities-arrow" id="toursNext" aria-label="Siguiente">&#10095;</button>
+          </div>
+        </div>
+        <p class="muted-text" id="toursNote"></p>
+      </div>
+    </section>
+
+    <section class="section" id="vibeSection">
+      <div class="section-inner">
+        <div class="section-header">
+          <h2 id="vibeHeading"></h2>
+          <p id="vibeDescription"></p>
+        </div>
+        <div class="vibe-gallery" id="vibeGallery"></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-inner">
+        <div class="cta-section">
+          <h2 id="activitiesCtaHeading"></h2>
+          <p id="activitiesCtaBody"></p>
+          <a id="activitiesCtaButton" class="btn-primary" href="./contacto.html"></a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <div class="footer-inner">
+      <span id="actFooterBrand"></span>
+      <span id="actFooterContact"></span>
+      <span id="actFooterCopy"></span>
+    </div>
+  </footer>
+
+  <div id="activityLightbox" class="activity-lightbox" hidden>
+    <div class="activity-lightbox_backdrop" data-lightbox-dismiss></div>
+    <div class="activity-lightbox_modal" role="dialog" aria-modal="true" aria-labelledby="activityLightboxTitle">
+      <button type="button" class="activity-lightbox_close" data-lightbox-dismiss aria-label="Cerrar">&times;</button>
+      <div class="activity-lightbox_main">
+        <button type="button" class="activity-lightbox_arrow prev" aria-label="Anterior">&#10094;</button>
+        <img class="activity-lightbox_image" alt="" />
+        <button type="button" class="activity-lightbox_arrow next" aria-label="Siguiente">&#10095;</button>
+      </div>
+      <div class="activity-lightbox_meta">
+        <h3 id="activityLightboxTitle" class="activity-lightbox_title"></h3>
+        <span class="activity-lightbox_counter"></span>
+      </div>
+      <div class="activity-lightbox_thumbs"></div>
+    </div>
+  </div>
+</body>
+</html>

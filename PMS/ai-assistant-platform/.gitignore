@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.*
+storage/runtime/config/runtime-config.json
+storage/runtime/logs/*.jsonl
+storage/runtime/approvals/*.json
+storage/runtime/conversations/*.json
+coverage
+*.log

@@ -1,0 +1,211 @@
+.pms-date-range-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pms-date-range-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(120, 150, 190, 0.28);
+  border-radius: 12px;
+  background: rgba(17, 36, 72, 0.9);
+  color: rgba(220, 235, 255, 0.92);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pms-date-range-picker-trigger:hover {
+  border-color: rgba(53, 199, 240, 0.42);
+  background: rgba(21, 44, 86, 0.96);
+}
+
+.pms-date-range-picker-separator {
+  opacity: 0.68;
+  font-size: 12px;
+}
+
+.pms-date-range-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 10, 24, 0.68);
+  backdrop-filter: blur(2px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 24px;
+}
+
+.pms-date-range-backdrop.is-open {
+  display: flex;
+}
+
+.pms-date-range-dialog {
+  width: min(920px, 100%);
+  max-width: 920px;
+  border-radius: 18px;
+  border: 1px solid rgba(120, 150, 190, 0.22);
+  background: rgba(7, 20, 44, 0.98);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.pms-date-range-dialog-header,
+.pms-date-range-dialog-footer {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(120, 150, 190, 0.12);
+}
+
+.pms-date-range-dialog-footer {
+  border-bottom: 0;
+  border-top: 1px solid rgba(120, 150, 190, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pms-date-range-dialog-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pms-date-range-summary {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.pms-date-range-summary-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pms-date-range-summary-label {
+  font-size: 12px;
+  color: rgba(190, 210, 235, 0.72);
+}
+
+.pms-date-range-summary-value {
+  font-weight: 700;
+  color: rgba(245, 250, 255, 0.96);
+}
+
+.pms-date-range-calendars {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.pms-date-range-calendar {
+  border: 1px solid rgba(120, 150, 190, 0.18);
+  border-radius: 16px;
+  background: rgba(11, 27, 56, 0.32);
+  padding: 12px;
+}
+
+.pms-date-range-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.pms-date-range-calendar-nav {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(120, 150, 190, 0.22);
+  border-radius: 10px;
+  background: rgba(17, 36, 72, 0.82);
+  color: rgba(220, 235, 255, 0.92);
+  cursor: pointer;
+}
+
+.pms-date-range-calendar-title {
+  font-weight: 700;
+  text-align: center;
+  flex: 1 1 auto;
+}
+
+.pms-date-range-weekdays,
+.pms-date-range-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.pms-date-range-weekday {
+  text-align: center;
+  font-size: 12px;
+  color: rgba(190, 210, 235, 0.7);
+  padding: 4px 0;
+}
+
+.pms-date-range-day {
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(220, 235, 255, 0.92);
+  cursor: pointer;
+}
+
+.pms-date-range-day:hover {
+  border-color: rgba(53, 199, 240, 0.38);
+  background: rgba(53, 199, 240, 0.12);
+}
+
+.pms-date-range-day.is-outside {
+  opacity: 0.28;
+}
+
+.pms-date-range-day.is-today {
+  border-color: rgba(53, 199, 240, 0.42);
+}
+
+.pms-date-range-day.is-in-range {
+  background: rgba(53, 199, 240, 0.14);
+  border-color: rgba(53, 199, 240, 0.18);
+}
+
+.pms-date-range-day.is-range-start,
+.pms-date-range-day.is-range-end {
+  background: rgba(53, 199, 240, 0.28);
+  border-color: rgba(53, 199, 240, 0.68);
+  color: #ffffff;
+}
+
+.pms-date-range-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pms-date-range-note {
+  color: rgba(190, 210, 235, 0.72);
+  font-size: 12px;
+}
+
+@media (max-width: 860px) {
+  .pms-date-range-dialog {
+    width: min(96vw, 720px);
+  }
+
+  .pms-date-range-calendars {
+    grid-template-columns: 1fr;
+  }
+
+  .pms-date-range-summary {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+}

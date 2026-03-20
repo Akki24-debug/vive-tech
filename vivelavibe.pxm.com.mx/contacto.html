@@ -1,0 +1,156 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Contacto | Vive la Vibe</title>
+  <link rel="stylesheet" href="./page.css" />
+  <script src="./credentials.js" defer></script>
+  <script src="./resources.js" defer></script>
+  <script src="./texts.js" defer></script>
+  <script src="./theme.js" defer></script>
+  <script src="./page-contact.js" defer></script>
+</head>
+<body>
+  <header class="page-header">
+    <nav class="nav" aria-label="Principal">
+      <a class="logo" href="./index.html" aria-label="Inicio">
+        <img id="logoImg" alt="Vive la Vibe" />
+        <span id="logoText"></span>
+      </a>
+      <div class="spacer"></div>
+      <div class="menu">
+        <a id="navActivities" href="./actividades.html"></a>
+        <a id="navLodgings" href="./index.html#lodgings"></a>
+        <a id="navContact" class="active" href="./contacto.html"></a>
+        <a id="navCTA" class="cta" href="./index.html#bookerCard"></a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-inner">
+        <span class="hero-badge" id="contactHeroEyebrow"></span>
+        <h1 id="contactHeroTitle"></h1>
+        <p id="contactHeroSubtitle"></p>
+        <p id="contactHeroDescription"></p>
+        <div class="hero-actions">
+          <button id="contactPrimaryCta" class="btn-primary" type="button"></button>
+          <a id="contactSecondaryCta" class="btn-ghost" href="#"></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-inner">
+        <div class="section-header">
+          <h2 id="contactChannelsHeading"></h2>
+          <p id="contactChannelsDescription"></p>
+        </div>
+        <div class="contact-grid">
+          <article class="info-card" aria-labelledby="contactChannelsHeading">
+            <h3 id="contactChannelsSubheading"></h3>
+            <ul id="contactChannelList"></ul>
+          </article>
+          <article class="info-card" aria-labelledby="contactOfficeHeading">
+            <h3 id="contactOfficeHeading"></h3>
+            <ul id="contactOfficeLines"></ul>
+          </article>
+          <article class="info-card" aria-labelledby="contactScheduleHeading">
+            <h3 id="contactScheduleHeading"></h3>
+            <ul id="contactScheduleLines"></ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-inner">
+        <div class="contact-grid">
+          <article class="info-card" aria-labelledby="contactAssistanceHeading">
+            <h3 id="contactAssistanceHeading"></h3>
+            <ul id="contactAssistanceList"></ul>
+          </article>
+          <article class="info-card form-card" aria-labelledby="contactFormHeading">
+            <h3 id="contactFormHeading"></h3>
+            <p class="muted-text" id="contactFormDescription"></p>
+            <form id="contactForm" novalidate>
+              <div class="form-row">
+                <label for="contactFieldName">
+                  <span id="contactFieldNameLabel"></span>
+                  <input id="contactFieldName" name="name" type="text" required />
+                </label>
+                <label for="contactFieldEmail">
+                  <span id="contactFieldEmailLabel"></span>
+                  <input id="contactFieldEmail" name="email" type="email" required />
+                </label>
+              </div>
+              <div class="form-row">
+                <label for="contactFieldPhone">
+                  <span id="contactFieldPhoneLabel"></span>
+                  <input id="contactFieldPhone" name="phone" type="tel" />
+                </label>
+                <label for="contactFieldGuests">
+                  <span id="contactFieldGuestsLabel"></span>
+                  <input id="contactFieldGuests" name="guests" type="number" min="1" />
+                </label>
+              </div>
+              <label for="contactFieldDates">
+                <span id="contactFieldDatesLabel"></span>
+                <input id="contactFieldDates" name="dates" type="text" />
+              </label>
+              <label for="contactFieldMessage">
+                <span id="contactFieldMessageLabel"></span>
+                <textarea id="contactFieldMessage" name="message"></textarea>
+              </label>
+              <button class="btn-primary" type="submit" id="contactSubmit"></button>
+              <p class="muted-text" id="contactFormPrivacy"></p>
+              <p class="muted-text" id="contactFormFeedback" hidden></p>
+            </form>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-inner">
+        <div class="contact-grid">
+          <article class="info-card" aria-labelledby="contactSocialHeading">
+            <h3 id="contactSocialHeading"></h3>
+            <ul id="contactSocialList"></ul>
+            <div class="socials">
+              <a id="socialInstagram" class="gicon instagram" target="_blank" rel="noopener"></a>
+              <a id="socialTikTok" class="gicon tiktok" target="_blank" rel="noopener"></a>
+              <a id="socialFacebook" class="gicon facebook" target="_blank" rel="noopener"></a>
+              <a id="socialWhatsApp" class="gicon whatsapp" target="_blank" rel="noopener"></a>
+            </div>
+          </article>
+          <article class="info-card" aria-labelledby="contactFaqHeading">
+            <h3 id="contactFaqHeading"></h3>
+            <div class="faq-grid" id="contactFaqList"></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-inner">
+        <div class="cta-section" id="contactCta">
+          <h2 id="contactCtaHeading"></h2>
+          <p id="contactCtaBody"></p>
+          <a class="btn-primary" id="contactCtaButton" href="./actividades.html"></a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <div class="footer-inner">
+      <span id="footerBrand"></span>
+      <span id="footerContact"></span>
+      <span id="footerCopy"></span>
+    </div>
+  </footer>
+</body>
+</html>

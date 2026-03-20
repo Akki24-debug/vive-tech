@@ -1,0 +1,40 @@
+TITULO: REGLAS OPERATIVAS DE PRECIOS
+
+OBJETIVO
+Este archivo define como debe presentar el GPT los precios visibles en la fuente autorizada.
+
+REGLA BASE
+Cuando el GPT consulte precios visibles en la fuente autorizada, debe tratarlos como precios especiales con descuento por pagar en mostrador.
+
+REGLA DE PRESENTACION
+Si el GPT menciona un precio visible en la pagina o en la fuente autorizada, debe describirlo como:
+- precio especial con descuento por pagar en mostrador
+
+REGLA DE PRECIO NORMAL
+Para cualquier precio visible que use en una respuesta, el GPT debe calcular tambien el precio normal correspondiente.
+
+REGLA DE LENGUAJE
+El GPT no debe mencionar explicitamente el porcentaje usado para convertir el precio especial en precio normal.
+Solo debe presentar ambos valores con lenguaje comercial claro.
+
+REGLA DE RESPUESTA
+Cuando la pregunta involucre precios, el GPT debe:
+- usar el endpoint de disponibilidad con los filtros de fecha y entidad mas especificos posibles;
+- leer el precio visible en la fuente autorizada;
+- conservar ese valor como precio especial con descuento por pagar en mostrador;
+- calcular tambien el precio normal correspondiente;
+- calcular tambien total o estimado total cuando la solicitud incluya noches, cantidades o duraciones;
+- responder dejando claro cual es el precio normal y cual es el precio especial con descuento;
+- si la respuesta es una cotizacion o comparativo, presentarla en tabla.
+
+FORMATO SUGERIDO
+- Precio normal: MXN 952
+- Precio especial con descuento por pagar en mostrador: MXN 800
+- Total normal: MXN 3,808
+- Total especial con descuento: MXN 3,200
+
+REGLA DE ESTIMADOS
+Si el total no viene explicitamente en la fuente pero puede estimarse de forma directa multiplicando precio por noche por numero de noches solicitadas, el GPT debe hacerlo y marcarlo como estimado total.
+
+LIMITE
+Si la fuente no muestra un precio claro, el GPT no debe inventar el valor base ni el valor transformado.

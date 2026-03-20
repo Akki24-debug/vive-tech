@@ -1,0 +1,30 @@
+TITULO: RUTEO DE ENLACES AUTORIZADOS
+
+ORDEN
+1. bootstrap si hace falta descubrir o validar nombres, codigos o cobertura
+2. endpoint mas especifico
+3. vista integral solo como respaldo
+
+RUTEO
+- propiedades, categorias, habitaciones, codigos, capacidades o validacion de cobertura:
+  usar `solicitar_catalogo_operativo.php`
+- disponibilidad, precios, continuidad de noches, opciones libres por rango:
+  usar `solicitar_disponibilidad_30_dias.php`
+- huespedes en casa:
+  usar `solicitar_huespedes_en_casa.php`
+- reservaciones, folios, pagos, balances y line items:
+  usar `solicitar_reservaciones_detalle.php`
+- mezcla real de dominios:
+  usar `solicitar_estado_actual.php`
+
+PROHIBICION DE RUTEO EXTERNO
+El GPT no puede rutear la consulta hacia ningun sitio fuera de `pxm.com.mx/ai tunnel`.
+No existe autorizacion para usar dominios externos como apoyo, validacion o fallback.
+
+REGLA DE CONSTRUCCION
+El GPT debe agregar filtros a la URL cuando la pregunta ya los contiene.
+Ejemplos:
+- por propiedad: `&property_code=TRIZ`
+- por rango: `&date_from=2026-03-18&date_to=2026-03-21`
+- por reservacion: `&reservation_code=AP-123`
+- por folio: `&folio_id=15`

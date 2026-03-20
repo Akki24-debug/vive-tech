@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Vive la Vibe  Puerto Escondido</title>
+
+  <script src="./seo.js"></script>
+  <script src="./credentials.js" defer></script>
+  <script src="./resources.js" defer></script>
+  <script src="./texts.js" defer></script>
+  <script src="./cart.js" defer></script>
+  <script src="./apiClient.js" defer></script>
+  <script src="./calculator-suggestions.js?v=4" defer></script>
+  <script src="./calculator.js?v=4" defer></script>
+  <script src="./checkout.js" defer></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+    :root{
+      --bg:#fcf9ea; --surface:#fffdf7; --surface-strong:#fff3f5;
+      --muted:#badfdb; --primary:#e6007e; --primary-strong:#c2006a;
+      --accent:#ffa4a4; --accent-soft:#ffbdbd; --text:#2d1b2f; --text-soft:#72506b; --shadow:0 14px 32px rgba(230,0,126,.12);
+      --rainbow: linear-gradient(90deg,#ffa4a4 0%,#ffbdbd 20%,#badfdb 40%,#e6007e 60%,#ffbdbd 80%,#e6007e 100%);
+      --cycle: 6000ms;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;background:var(--bg);color:var(--text);font-family:"Manrope","Segoe UI",system-ui,-apple-system,sans-serif}
+    a{color:inherit;text-decoration:none}
+    img{display:block;width:100%;height:100%;object-fit:cover}
+
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+    .swap{animation:fadeInUp .35s ease both}
+    @keyframes progressAnim{from{width:0%}to{width:100%}}
+    @keyframes zoomFade{0%{opacity:0;transform:scale(1.05) translateY(6px);filter:blur(3px)}60%{opacity:1;transform:scale(1.0) translateY(0);filter:blur(0)}100%{opacity:1}}
+    @keyframes burst{0%{opacity:.6;transform:scale(.985)}100%{opacity:1;transform:scale(1)}}
+    @keyframes hoverPop{0%{transform:scale(1)}60%{transform:scale(1.06)}100%{transform:scale(1)}}
+
+    /* ===== Header ===== */
+    .header{position:sticky;top:0;z-index:60;backdrop-filter:saturate(140%) blur(10px);
+      background:color-mix(in srgb,var(--surface) 92%, transparent);
+      border-bottom:1px solid color-mix(in srgb,var(--muted) 60%, transparent)}
+    .nav{max-width:1200px;margin:0 auto;height:76px;display:flex;align-items:center;gap:18px;padding:0 16px}
+    .logo{display:flex;align-items:center;gap:12px;font-weight:800;font-size:1.05rem}
+    .logo img{width:56px;height:56px;border-radius:16px;box-shadow:var(--shadow)}
+    .spacer{flex:1}
+    .menu{display:flex;gap:18px;align-items:center}
+    .menu a{padding:10px 8px;border-radius:10px;opacity:.9}
+    .menu a:hover{opacity:1;background:color-mix(in srgb,var(--muted) 28%, transparent)}
+
+    .btn-ghost{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding:10px 16px;
+      border-radius:999px;
+      border:1px solid color-mix(in srgb,var(--muted) 60%, transparent);
+      background:transparent;
+      color:var(--text-soft);
+      font-weight:600;
+      transition:color .15s ease, border-color .15s ease, transform .1s ease;
+    }
+    .btn-ghost:hover{
+      color:var(--text);
+      border-color:var(--accent);
+      transform:translateY(-2px);
+    }
+
+    /* Redes header */
+    .header-socials{display:flex;gap:10px;align-items:center;margin-right:6px}
+    .gicon{width:26px;height:26px;display:inline-block;background:var(--text-soft);
+      transition:transform .15s ease, background-color .2s ease, filter .2s ease;
+      -webkit-mask: var(--mask) no-repeat center / contain; mask: var(--mask) no-repeat center / contain;}
+    .gicon:hover{transform:translateY(-1px) scale(1.08);background:var(--primary);filter:drop-shadow(0 2px 10px rgba(230,0,126,.24))}
+    .gicon.instagram{--mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zm5 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm6.5-0.9a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2z"/></svg>');}
+    .gicon.tiktok{--mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M16 8.1c1.4 1.1 3.1 1.7 5 1.7v3.1c-1.9 0-3.7-.6-5-1.7V16a6 6 0 1 1-6-6c.3 0 .7 0 1 .1v3.2a3 3 0 1 0 3 3V2h3v6.1z"/></svg>');}
+    .gicon.facebook{--mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 22v-8h3l1-4h-4V7.5c0-1.2.3-2 2-2h2V2.1C16.6 2 15.3 2 14 2a4 4 0 0 0-4 4V10H7v4h3v8h3z"/></svg>');}
+    .gicon.whatsapp{--mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 0-8.8 14.9L2 22l5.3-1.1A10 10 0 1 0 12 2zm5.6 14.3c-.2.6-1 1-1.6 1.1-.4 0-.9 0-1.5-.2-2.6-.9-4.3-3.1-4.9-3.9-.6-.8-1.2-1.8-1.2-2.8 0-1 .6-1.5.8-1.8.2-.2.4-.3.6-.3h.4c.2 0 .3 0 .4.3l.6 1.4c.1.3.1.4 0 .6l-.3.4c-.1.2-.2.3-.1.5.2.5.8 1.6 1.9 2.6 1.3 1.2 2.6 1.6 3.1 1.8.2.1.4 0 .6-.2l.5-.6c.2-.3.4-.3.7-.2l1.5.7c.3.2.3.4.2.6z"/></svg>');}
+
+    .cta{display:flex;align-items:center;gap:6px;padding:10px 14px;border-radius:999px;
+      background:linear-gradient(135deg,var(--primary),var(--accent));color:#ffffff;font-weight:800;box-shadow:var(--shadow);
+      transition:filter .15s ease, transform .05s ease}
+    .cta:hover{filter:brightness(1.05);transform:translateY(-1px)}
+    .cta:active{transform:translateY(0)}
+    .cta .calc-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px}
+    .cta .calc-icon svg{width:18px;height:18px;fill:#ffffff;display:block}
+
+    .activities-header{
+      display:flex;
+      align-items:flex-end;
+      justify-content:space-between;
+      gap:16px;
+      flex-wrap:wrap;
+      margin-bottom:18px;
+    }
+    .activities-carousel{
+      position:relative;
+      margin:0;
+    }
+    .activities-track{
+      display:flex;
+      gap:16px;
+      overflow:hidden;
+      scroll-behavior:smooth;
+    }
+    .activities-track .card{
+      min-width:260px;
+      flex:0 0 auto;
+      background:var(--surface-strong);
+      border:1px solid color-mix(in srgb,var(--muted) 60%, transparent);
+      border-radius:18px;
+      box-shadow:var(--shadow);
+      transition:transform .18s ease, box-shadow .18s ease;
+    }
+    .activities-track .card:hover{
+      transform:translateY(-6px);
+      box-shadow:0 18px 36px rgba(230,0,126,.12);
+    }
+    .activities-track .card .card-body{
+      padding:16px;
+      display:grid;
+      gap:10px;
+    }
+    .activities-track .card .card-meta{
+      display:grid;
+      gap:4px;
+      font-size:.85rem;
+      color:var(--text-soft);
+    }
+    .activities-track picture{
+      border-radius:18px 18px 0 0;
+      overflow:hidden;
+      display:block;
+    }
+    .activities-nav{
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:0 6px;
+    }
+    .activities-arrow{
+      pointer-events:auto;
+      width:38px;
+      height:38px;
+      border-radius:50%;
+      border:1px solid color-mix(in srgb,var(--muted) 55%, transparent);
+      background:color-mix(in srgb,var(--surface) 90%, transparent);
+      color:var(--text);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      transition:transform .1s ease, border-color .15s ease;
+    }
+    .activities-arrow:hover{
+      transform:translateY(-1px);
+      border-color:var(--primary);
+    }
+    .activities-arrow[disabled]{
+      opacity:.25;
+      cursor:default;
+      transform:none;
+      border-color:color-mix(in srgb,var(--muted) 35%, transparent);
+    }
+    .activities-add-btn{
+      margin-top:6px;
+      padding:10px 14px;
+      border-radius:12px;
+      border:0;
+      font-weight:700;
+      cursor:pointer;
+      width:100%;
+      background:var(--primary);
+      color:#ffffff;
+      transition:filter .15s ease, transform .1s ease;
+    }
+    .activities-add-btn:hover{
+      filter:brightness(1.05);
+      transform:translateY(-1px);
+    }
+    .activities-add-btn:disabled{
+      opacity:0.7;
+      cursor:default;
+      transform:none;
+    }
+
+    .mini-booker{display:none;align-items:center;gap:8px}
+    .mini-booker select,.mini-booker button{
+      height:38px;border-radius:10px;border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);
+      background:color-mix(in srgb,var(--surface) 92%, transparent);color:var(--text);padding:0 10px}
+    .mini-booker button{background:var(--primary);color:#ffffff;border:none;font-weight:800;cursor:pointer;box-shadow:var(--shadow)}
+    .mini-booker button:hover{filter:brightness(1.05)}
+    body.booker-in-header .mini-booker{display:flex}
+
+    /* ===== HERO TOP ===== */
+    .hero-top{max-width:1200px;margin:8px auto 0;padding:0 16px}
+    .hero-top__bg{position:relative;border-radius:16px;overflow:hidden;min-height:320px;background:#fef1f4 center/cover no-repeat;box-shadow:var(--shadow)}
+    .hero-top__bg::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,189,189,.46),rgba(252,249,234,.78))}
+    .hero-top__content{position:relative;z-index:1;padding:18px;display:grid;justify-items:center}
+    .glass{width:min(760px,95%);margin:0 auto;background:color-mix(in srgb,var(--surface) 78%, transparent);backdrop-filter:blur(6px) saturate(120%);border:1px solid color-mix(in srgb,var(--primary) 18%, transparent);border-radius:14px;padding:14px 16px;box-shadow:0 12px 28px rgba(230,0,126,.12)}
+    .hero-block{display:grid;row-gap:10px;justify-items:center}
+    .title-wrap{display:flex;align-items:center;justify-content:center;gap:10px}
+    .cycle-btn{width:34px;height:34px;border-radius:999px;border:1px solid color-mix(in srgb,var(--muted) 60%, transparent);background:color-mix(in srgb,var(--surface) 30%, transparent);color:var(--primary);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background .15s ease, transform .05s ease, border-color .15s ease}
+    .cycle-btn:hover{background:color-mix(in srgb,var(--surface) 10%, transparent);border-color:var(--accent);transform:translateY(-1px)}
+    .cycle-btn svg{width:18px;height:18px;display:block}
+    .intro h1{margin:0;font-size:40px;letter-spacing:.3px;text-align:center;background:var(--rainbow);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shimmer 8s linear infinite}
+    @keyframes shimmer{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+
+    /* Barra de progreso ms pequea */
+    .cycle-progress{width:420px;max-width:92%;height:2px;background:rgba(114,80,107,.2);border-radius:999px;overflow:hidden}
+    .cycle-progress__bar{height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--primary));animation:progressAnim var(--cycle) linear forwards}
+
+    /* Buscador */
+    .searchGroup{margin-top:14px;width:100%}
+    .search-wrap{display:flex;gap:8px;justify-content:center}
+    .search-wrap .input{max-width:360px;width:100%}
+    .quicklinks{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:6px}
+    .tag{display:inline-block;background:color-mix(in srgb,var(--muted) 40%, transparent);padding:6px 10px;border-radius:999px}
+
+    /* ===== Galera + aside ===== */
+    .hero-wrap{max-width:1200px;margin:0 auto;padding:14px 16px 0;display:grid;grid-template-columns:8fr 4fr;gap:16px}
+    .masonry{column-count:4;column-gap:12px}
+    .masonry.burst{animation:burst .35s ease}
+    .m-card{display:inline-block;width:100%;margin:0 0 12px;break-inside:avoid;border-radius:14px;overflow:hidden;box-shadow:var(--shadow);background:var(--surface);position:relative;border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);cursor:pointer;will-change:transform}
+    .m-card.cardIn{animation:zoomFade .6s ease both;animation-delay:calc(var(--i) * 28ms)}
+    .m-card .photo{width:100%;aspect-ratio:var(--ratio,4/3);position:relative}
+    .m-card .photo picture{display:block;width:100%;height:100%}
+    .m-card .photo img{display:block;width:100%;height:100%;object-fit:cover;transform-origin:center center;will-change:transform}
+    .m-card .photo .label{position:absolute;left:8px;bottom:8px;background:color-mix(in srgb,var(--primary) 55%, rgba(255,255,255,.48));color:#ffffff;padding:6px 8px;border-radius:10px;font-size:.78rem}
+    .m-card:hover .photo img{animation:hoverPop .6s ease}
+
+    .booker{position:sticky;top:calc(76px + 12px);align-self:start;background:var(--surface);border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);border-radius:16px;padding:16px;box-shadow:var(--shadow)}
+    .field{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+    .field label{font-size:.8rem;color:var(--text-soft)}
+    .input, select, button{padding:12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);background:color-mix(in srgb,var(--surface) 92%, transparent);color:var(--text)}
+    .booker .primary{width:100%;background:var(--primary);color:#ffffff;border:none;font-weight:800;cursor:pointer;transition:filter .15s ease, transform .05s ease;box-shadow:var(--shadow)}
+    .booker .primary:hover{filter:brightness(1.05);transform:translateY(-1px)}
+    .booker .primary:active{transform:translateY(0)}
+
+    .section{max-width:1200px;margin:0 auto;padding:32px 16px}
+    .cards{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+    .card{grid-column:span 4;background:var(--surface);border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}
+    .card .body{padding:14px}
+    .muted{color:var(--text-soft)}
+    .lodgings-grid .card{grid-column:span 3}
+
+    footer{background:color-mix(in srgb,var(--surface) 96%, transparent);border-top:1px solid color-mix(in srgb,var(--muted) 60%, transparent);margin-top:40px}
+    .footer-wrap{max-width:1200px;margin:0 auto;padding:26px 16px;display:grid;grid-template-columns:2fr 1.2fr 1.2fr;gap:18px}
+    .small{font-size:.9rem;color:var(--text-soft)}
+
+    /* Lightbox */
+    .lightbox{position:fixed;inset:0;z-index:80;background:rgba(45,25,45,.5);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center}
+    .lightbox[hidden]{display:none}
+    .lb-inner{position:relative;max-width:95vw;max-height:90vh;display:flex;align-items:center;justify-content:center}
+    .lb-img{max-width:95vw;max-height:88vh;border-radius:14px;box-shadow:0 20px 60px rgba(230,0,126,.18);background:#fff3f7}
+    .lb-caption{position:absolute;left:0;bottom:-36px;color:var(--text);font-size:.95rem}
+    .lb-close{position:absolute;top:-44px;right:-4px;background:transparent;border:0;color:var(--primary);font-size:34px;cursor:pointer}
+    .lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:46px;height:46px;border-radius:999px;border:0;cursor:pointer;color:var(--primary);background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow);opacity:.95}
+    .lb-prev{left:-56px}.lb-next{right:-56px}
+    .lb-nav:active{transform:translateY(-50%) scale(.98)}
+    .visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;border:0;padding:0;clip:rect(0 0 0 0);overflow:hidden;white-space:nowrap}
+
+    @media (max-width:1100px){
+      .gicon{width:24px;height:24px}
+      .intro h1{font-size:36px}
+    }
+    @media (max-width:720px){
+      .hero-wrap{grid-template-columns:1fr}
+      .booker{position:static}
+      .masonry{column-count:1}
+      .mini-booker{display:none !important}
+      .lodgings-grid .card{grid-column:span 12}
+      .gicon{width:22px;height:22px}
+      .lb-nav{width:40px;height:40px}
+      .lb-prev{left:-48px}.lb-next{right:-48px}
+      .lb-caption{bottom:-30px}
+      .cycle-btn{width:30px;height:30px}
+      .intro h1{font-size:30px}
+    }
+  </style>
+</head>
+<body id="home">
+  <header class="header">
+    <nav class="nav" aria-label="Principal">
+      <a href="#home" class="logo" aria-label="Inicio">
+        <img id="logoImg" src="" alt="Vive la Vibe">
+        <span id="logoText"></span>
+      </a>
+      <div class="spacer"></div>
+      <div class="header-socials" aria-label="Redes sociales">
+        <a id="iconInstagram" class="gicon instagram" aria-label="Instagram" target="_blank" rel="noopener"></a>
+        <a id="iconTikTok"   class="gicon tiktok"    aria-label="TikTok"    target="_blank" rel="noopener"></a>
+        <a id="iconFacebook" class="gicon facebook"  aria-label="Facebook"  target="_blank" rel="noopener"></a>
+        <a id="iconWhatsApp" class="gicon whatsapp"  aria-label="WhatsApp"  target="_blank" rel="noopener"></a>
+      </div>
+      <div class="menu">
+        <a href="./actividades.html" id="navActivities"></a>
+        <a href="#lodgings" id="navLodgings"></a>
+        <a href="./contacto.html" id="navContact"></a>
+        <div class="mini-booker" id="miniBooker">
+          <label class="visually-hidden" for="miniSelect">Elige tu hospedaje</label>
+          <select id="miniSelect" aria-label="Elige tu hospedaje (mini)"></select>
+          <button type="button" id="miniBtn"></button>
+        </div>
+        <a href="#home" class="cta" id="navCTA" aria-label="Abrir calculadora">
+          <span class="calc-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm1 3v4h10V5H7zm0 6h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2zM7 15h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z"/></svg>
+          </span>
+          <span id="navCTAText"></span>
+        </a>
+      </div>
+    </nav>
+  </header>
+
+  <!-- HERO con fondo de hospedaje activo -->
+  <section class="hero-top">
+    <div id="heroTopBg" class="hero-top__bg">
+      <div class="hero-top__content">
+        <div id="heroGlass" class="glass hero-block swap" role="region" aria-label="Hospedaje activo">
+          <div class="title-wrap">
+            <button id="lodPrev" class="cycle-btn" aria-label="Hospedaje anterior">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <h1 id="introTitle" class="swap"></h1>
+            <button id="lodNext" class="cycle-btn" aria-label="Siguiente hospedaje">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m10 6 1.41 1.41L7.83 11H20v2H7.83l3.58 3.59L10 18l-6-6z"/></svg>
+            </button>
+          </div>
+          <div class="cycle-progress" aria-hidden="true">
+            <div id="cycleBar" class="cycle-progress__bar"></div>
+          </div>
+          <p id="introTagline" style="margin:6px 0 0;text-align:center"></p>
+          <p id="introSubtagline" style="margin:0 0 4px;text-align:center"></p>
+          <div class="searchGroup">
+            <form id="siteSearchForm" role="search" aria-label="Buscar en Vive la Vibe" class="search-wrap">
+              <label for="siteSearchInput" class="visually-hidden">Buscar</label>
+              <input id="siteSearchInput" class="input" placeholder="Buscar hospedajes, actividades">
+              <button class="primary" type="submit">Buscar</button>
+            </form>
+            <nav aria-label="Enlaces populares">
+              <ul class="quicklinks" style="list-style:none;padding:0;margin:6px 0 0">
+                <li><a class="tag" href="#activities">Bioluminiscencia</a></li>
+                <li><a class="tag" href="#lodgings">Alojamientos frente al mar</a></li>
+                <li><a class="tag" href="#guides">Mejor poca para visitar</a></li>
+                <li><a class="tag" href="#faq">FAQ</a></li>
+              </ul>
+            </nav>
+          </div>
+          <div id="siteSearchResults" class="section" style="padding:6px 0 0"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Galera + calculadora (SIN ttulo ni dropdown de hospedaje) -->
+  <section class="hero-wrap" id="hero">
+    <div><div class="masonry" id="masonry" aria-live="polite"></div></div>
+    <aside class="booker" id="bookerCard" aria-label="Calculadora">
+      <!-- <h3 id="bookerTitle"></h3>  --> <!-- Eliminado -->
+      <!-- Campo de hospedaje eliminado -->
+      <div class="field"><label id="lblCheckIn"></label><input class="input" type="date" aria-label="Fecha de llegada"/></div>
+      <div class="field"><label id="lblCheckOut"></label><input class="input" type="number" min="1" value="2" aria-label="Noches"/></div>
+      <div class="field"><label id="lblPeople"></label><input class="input" type="number" min="1" value="2" aria-label="Personas"/></div>
+      <div class="field" id="calcActivities">
+        <label id="lblActs">Actividades</label>
+        <div id="actsWrap" style="display:grid;grid-template-columns:1fr;gap:6px"></div>
+      </div>
+
+      <div class="field" id="calcExtras">
+        <details id="extrasToggle" style="background:color-mix(in srgb,var(--surface) 96%, transparent);border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);border-radius:10px;padding:10px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text)">Servicios adicionales</summary>
+          <div id="extrasWrap" style="display:grid;grid-template-columns:1fr;gap:6px;margin-top:8px">
+            <label for="extra_motos" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);border-radius:10px;background:color-mix(in srgb,var(--surface) 92%, transparent);cursor:pointer">
+              <input id="extra_motos" type="checkbox" style="accent-color:var(--primary)"/>
+              Renta de motos
+            </label>
+            <label for="extra_dron" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);border-radius:10px;background:color-mix(in srgb,var(--surface) 92%, transparent);cursor:pointer">
+              <input id="extra_dron" type="checkbox" style="accent-color:var(--primary)"/>
+              Sesion de fotos con dron
+            </label>
+          </div>
+        </details>
+      </div>
+
+      <button class="primary" type="button" id="btnSearch"></button>
+    </aside>
+  </section>
+
+  <section class="section" id="activities">
+    <div class="activities-header">
+      <div>
+        <h2 id="activitiesTitle"></h2>
+        <p class="muted" id="activitiesDesc"></p>
+      </div>
+      <a class="btn-ghost" id="activitiesAllLink" href="./actividades.html">Ver todas las actividades</a>
+    </div>
+    <div class="activities-carousel">
+      <div class="activities-track" id="activitiesCards"></div>
+      <div class="activities-nav">
+        <button type="button" class="activities-arrow" id="activitiesPrev" aria-label="Anterior"></button>
+        <button type="button" class="activities-arrow" id="activitiesNext" aria-label="Siguiente"></button>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="lodgings">
+    <h2 id="lodgingsTitle"></h2>
+    <p class="muted" id="lodgingsDesc"></p>
+    <div class="cards lodgings-grid" id="lodgingsGrid"></div>
+  </section>
+
+  <section class="section" id="reviews">
+    <h2>Opiniones de viajeros</h2>
+    <ul class="cards" style="grid-template-columns:repeat(12,1fr);gap:16px;list-style:none;padding:0;margin:0">
+      <li class="card"><div class="body"><p>La liberacin de tortugas fue increble. Organizacionn 10/10.</p><strong>Mara G.</strong>  </div></li>
+      <li class="card"><div class="body"><p>Posada San Jeronimonimo cmoda y a buen precio. Volvera.</p><strong>Carlos R.</strong>  </div></li>
+      <li class="card"><div class="body"><p>Bioluminiscencia espectacular, gua sper atento.</p><strong>Laura P.</strong>  </div></li>
+    </ul>
+  </section>
+
+  <section class="section" id="guides">
+    <h2>Guas para planear tu viaje</h2>
+    <div class="cards">
+      <article class="card"><div class="body"><h3>Qu hacer en Puerto Escondido en 3 das</h3><p class="muted">Playas imperdibles, miradores al atardecer y tours emblemticos.</p><a href="#activities" rel="noopener">Leer gua </a></div></article>
+      <article class="card"><div class="body"><h3>Mejor temporada para surfear</h3><p class="muted">Cundo llegan las olas grandes y spots para diferentes niveles.</p><a href="#activities" rel="noopener">Ver consejos </a></div></article>
+      <article class="card"><div class="body"><h3>Bioluminiscencia: lo que debes saber</h3><p class="muted">Fechas recomendadas, qu llevar y tips para fotos.</p><a href="#activities" rel="noopener">Aprender ms </a></div></article>
+    </div>
+  </section>
+
+  <section class="section" id="faq">
+    <h2>Preguntas frecuentes</h2>
+    <div id="faqWrap"></div>
+  </section>
+
+  <footer>
+    <div class="footer-wrap">
+      <div>
+        <div class="logo" style="margin-bottom:10px">
+          <img id="logoImgFooter" src="" alt="Vive la Vibe" style="width:34px;height:34px;border-radius:8px">
+          <span id="footerBrand"></span>
+        </div>
+        <p class="small" id="footerTagline"></p>
+        <div id="footerTags"></div>
+      </div>
+      <div>
+        <h4 id="footerExploreHeading"></h4>
+        <p class="small">
+          <a href="#activities" id="footerExplore1" rel="noopener"></a><br>
+          <a href="#lodgings" id="footerExplore2" rel="noopener"></a><br>
+          <a href="#faq" id="footerExplore3" rel="noopener"></a>
+        </p>
+      </div>
+      <div id="footerContact">
+        <h4 id="footerContactHeading"></h4>
+        <p class="small" id="footerContactLines"></p>
+        <p class="small" id="footerNAP"></p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Lightbox -->
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Visor de imgenes" hidden>
+    <div class="lb-inner">
+      <button class="lb-nav lb-prev" id="lbPrev" aria-label="Anterior"></button>
+      <img id="lbImage" class="lb-img" alt="">
+      <button class="lb-nav lb-next" id="lbNext" aria-label="Siguiente"></button>
+      <div class="lb-caption" id="lbCaption"></div>
+      <button class="lb-close" id="lbClose" aria-label="Cerrar"></button>
+    </div>
+  </div>
+
+  <script>
+    const S = window.VIVE_SEO || {};
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      if (window.VIVE_RESOURCES_READY && typeof window.VIVE_RESOURCES_READY.then === 'function') {
+        try {
+          await window.VIVE_RESOURCES_READY;
+        } catch (error) {
+          console.error('No se pudieron cargar los hospedajes desde la base de datos.', error);
+        }
+      }
+
+      const R = window.VIVE_RESOURCES, T = window.VIVE_TEXTS;
+      if(!R || !T){ alert('Faltan resources.js o texts.js'); return; }
+
+      const lodgingsGridEl = document.getElementById('lodgingsGrid');
+
+      const CYCLE_MS = 6000;
+      document.documentElement.style.setProperty('--cycle', CYCLE_MS+'ms');
+
+      let rotateTimer = null;
+      function restartProgress(){
+        const bar = document.getElementById('cycleBar');
+        bar.style.animation = 'none';
+        void bar.offsetWidth;
+        bar.style.animation = `progressAnim var(--cycle) linear forwards`;
+        bar.style.animationPlayState = 'running';
+      }
+      function pauseRotation(){
+        if(rotateTimer){ clearInterval(rotateTimer); rotateTimer = null; }
+        document.getElementById('cycleBar').style.animationPlayState = 'paused';
+      }
+      function startRotation(){
+        if(rotateTimer) clearInterval(rotateTimer);
+        rotateTimer = setInterval(()=> setActiveByIndex(activeIdx+1), CYCLE_MS);
+        restartProgress();
+      }
+      function animateSwap(el){ if(!el) return; el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap'); }
+
+      /* Paleta */
+      const pal = R.palettes[R.activePalette] || Object.values(R.palettes)[0];
+      if(pal){ for (const [k,v] of Object.entries(pal)) document.documentElement.style.setProperty(k, v); }
+
+      /* Branding/nav */
+      logoText.textContent = T.brandName; footerBrand.textContent = T.brandName;
+      logoImg.src = R.brand.logoUrl; logoImgFooter.src = R.brand.logoUrl;
+      navActivities.textContent = T.nav.activities; navLodgings.textContent = T.nav.lodgings; navContact.textContent = T.nav.contact;
+      document.getElementById('navCTAText').textContent = T.nav.cta;
+      miniBtn.textContent = T.header.miniButton;
+
+      /* Redes */
+      iconInstagram.href = R.socials.instagram; iconTikTok.href = R.socials.tiktok; iconFacebook.href = R.socials.facebook; iconWhatsApp.href = R.socials.whatsapp;
+
+      /* Textos hero */
+      introTagline.textContent = T.intro.tagline; introSubtagline.textContent = T.intro.subtagline;
+
+      /* Booker (sin ttulo ni select de hospedaje) */
+      const lblCI = document.getElementById('lblCheckIn');
+      const lblCO = document.getElementById('lblCheckOut');
+      const lblPP = document.getElementById('lblPeople');
+      if(lblCI) lblCI.textContent = T.booker.checkinLabel || 'Llegada';
+      if(lblCO) lblCO.textContent = T.calc?.nights || T.booker.nightsLabel || 'Noches';
+      if(lblPP) lblPP.textContent = T.booker.peopleLabel;
+      const btnSearch = document.getElementById('btnSearch');
+      if(btnSearch) btnSearch.textContent = T.booker.searchBtn;
+
+      /* Actividades (checkboxes en aside) */
+      (function renderAsideActivities(){
+        const wrap = document.getElementById('actsWrap'); wrap.innerHTML='';
+        const tours = (R.activities||[]).filter(a=> (a.type||'').toLowerCase()==='tour');
+        if(!tours.length){
+          const msg=document.createElement('p');
+          msg.className='muted-text';
+          msg.textContent='No hay tours disponibles por ahora.';
+          wrap.appendChild(msg);
+          return;
+        }
+        tours.forEach(a=>{
+          const id='act_'+a.id;
+          const row=document.createElement('label');
+          row.setAttribute('for', id);
+          row.style.cssText='display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);border-radius:10px;background:color-mix(in srgb,var(--surface) 94%, transparent);cursor:pointer';
+          row.innerHTML=`<input id="${id}" type="checkbox" style="accent-color:var(--primary)"/> ${a.title}`;
+          wrap.appendChild(row);
+        });
+      })();
+      (function renderAsideExtras(){
+        const wrap = document.getElementById('extrasWrap'); if(!wrap) return;
+        const extras = Array.isArray(R.extras) && R.extras.length ? R.extras : [
+          { id: 'extra_motos', title: 'Renta de motos' },
+          { id: 'extra_dron', title: 'Sesionn de fotos con dron' }
+        ];
+        wrap.innerHTML = '';
+        extras.forEach(extra=>{
+          const rawId = String(extra.id || extra.code || extra.slug || `extra-${Math.random().toString(36).slice(2,7)}`);
+          const inputId = rawId.startsWith('extra_') ? rawId : `extra_${rawId}`;
+          const row=document.createElement('label');
+          row.setAttribute('for', inputId);
+          row.style.cssText='display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid color-mix(in srgb,var(--muted) 70%, transparent);border-radius:10px;background:color-mix(in srgb,var(--surface) 92%, transparent);cursor:pointer';
+          row.innerHTML=`<input id="${inputId}" type="checkbox" style="accent-color:var(--primary)"/> ${extra.title || extra.name || 'Servicio adicional'}`;
+          wrap.appendChild(row);
+        });
+      })();
+
+      /* Imgenes helpers */
+      const RATIOS = Array.isArray(R.aspectRatios)&&R.aspectRatios.length?R.aspectRatios:["4/3","16/9","1/1","3/4","2/3"];
+      const imgsFor = id => { const l=(R.lodgings||[]).find(x=>x.id===id); return (l?.images||[]).map(src=>({src,lodgingId:l.id,lodgingName:l.name})); };
+
+      /* Select mini-booker */
+      function fillSelect(sel, activeId){
+        if(!sel) return;
+        sel.innerHTML='';
+        (R.lodgings||[]).forEach((l,i)=> sel.add(new Option(l.name,l.id,i===0, l.id===activeId || (i===0 && !activeId))));
+      }
+
+      /* Hero background y filtro para no repetir esa imagen en galera */
+      const heroTopBg=document.getElementById('heroTopBg');
+      let heroBgUrl = '';
+      function updateHeroBg(l){
+        heroBgUrl = (l?.images&&l.images[0]) || '';
+        heroTopBg.style.backgroundImage = heroBgUrl ? `url('${heroBgUrl}')` : 'none';
+      }
+
+      /* Galera masonry */
+      const masonry=document.getElementById('masonry'); let currentSet=[]; let currentIndex=0;
+      function createCard(item, idx){
+        const card=document.createElement('article'); card.className='m-card cardIn'; card.dataset.index=idx;
+        card.style.setProperty('--i', idx); card.style.setProperty('--ratio', RATIOS[idx%RATIOS.length]);
+        const photo=document.createElement('div'); photo.className='photo';
+        const picture=document.createElement('picture');
+        const sWebp=document.createElement('source'); sWebp.type='image/webp'; sWebp.srcset=item.src;
+        const img=document.createElement('img'); img.loading='lazy'; img.src=item.src; img.alt=item.lodgingName; img.width=800; img.height=600;
+        picture.appendChild(sWebp); picture.appendChild(img); photo.appendChild(picture);
+        const label=document.createElement('div'); label.className='label'; label.textContent=item.lodgingName;
+        photo.appendChild(label); card.appendChild(photo);
+        card.addEventListener('click', ()=> openLightbox(idx));
+        card.addEventListener('mouseenter', ()=>{ restartProgress(); pauseRotation(); });
+        card.addEventListener('mouseleave', ()=>{ startRotation(); });
+        return card;
+      }
+      function renderMasonry(list){
+        // Filtrar UNA sola vez la imagen de fondo (no duplicar)
+        let skipped=false;
+        const filtered = list.filter(it=>{
+          if(!skipped && heroBgUrl && it.src===heroBgUrl){ skipped=true; return false; }
+          return true;
+        });
+        currentSet=filtered.slice(); masonry.classList.add('burst'); masonry.innerHTML='';
+        filtered.forEach((it,i)=> masonry.appendChild(createCard(it,i)));
+        setTimeout(()=> masonry.classList.remove('burst'),400);
+      }
+
+      /* Estado rotativo */
+      const LODS=R.lodgings||[]; let activeIdx=0;
+      function setActiveById(lid){
+        const idx=LODS.findIndex(l=>l.id===lid); if(idx>=0) activeIdx=idx; const active=LODS[activeIdx]; if(!active) return;
+        fillSelect(miniSelect, active.id);
+        introTitle.textContent=active.name; animateSwap(introTitle); updateHeroBg(active);
+        renderMasonry(imgsFor(active.id)); restartProgress();
+      }
+      function setActiveByIndex(i){ if(!LODS.length) return; activeIdx=(i+LODS.length)%LODS.length; setActiveById(LODS[activeIdx].id); }
+      setActiveByIndex(0); startRotation();
+
+      // Controles de ciclo
+      lodPrev.addEventListener('click', ()=>{ setActiveByIndex(activeIdx-1); startRotation(); });
+      lodNext.addEventListener('click', ()=>{ setActiveByIndex(activeIdx+1); startRotation(); });
+      miniSelect.addEventListener('change', e=>{ setActiveById(e.target.value); startRotation(); });
+
+      /* Secciones informativas */
+      const activitiesCardsEl = document.getElementById('activitiesCards');
+      const activitiesAllLink = document.getElementById('activitiesAllLink');
+      const activityFallbackImg = 'https://picsum.photos/seed/fallback-activity/800/500';
+      const formatPrice = (value, currencyCode) => {
+        if (typeof value !== 'number' || !isFinite(value)) return '';
+        try {
+          return new Intl.NumberFormat('es-MX', { style: 'currency', currency: currencyCode || R.currency || 'MXN', maximumFractionDigits: 0 }).format(value);
+        } catch {
+          return `${value} ${currencyCode || 'MXN'}`;
+        }
+      };
+      function activityImageFirst(id){
+        const a = (R.activities || []).find(x => x.id === id);
+        return (a && Array.isArray(a.images) && a.images[0]) ? a.images[0] : activityFallbackImg;
+      }
+      const activitiesTrack = document.getElementById('activitiesCards');
+      const activitiesPrev = document.getElementById('activitiesPrev');
+      const activitiesNext = document.getElementById('activitiesNext');
+      activitiesDesc.textContent = T.activities.desc;
+      if (activitiesTrack) {
+        activitiesTrack.innerHTML = '';
+        const tours = (Array.isArray(R.activities) ? R.activities : []).filter(act => (act.type || '').toLowerCase() === 'tour');
+        if (activitiesAllLink) {
+          activitiesAllLink.style.display = tours.length ? 'inline-flex' : 'none';
+        }
+        if (!tours.length) {
+          const emptyActs = document.createElement('p');
+          emptyActs.className = 'muted swap';
+          emptyActs.textContent = 'No hay actividades disponibles por ahora.';
+          activitiesTrack.appendChild(emptyActs);
+          if (activitiesPrev) activitiesPrev.disabled = true;
+          if (activitiesNext) activitiesNext.disabled = true;
+        } else {
+          tours.forEach(act => {
+            const imgUrl = activityImageFirst(act.id);
+            const currencyCode = act.currency || R.currency || 'MXN';
+            const priceLabel = typeof act.pricePerPerson === 'number' && isFinite(act.pricePerPerson)
+              ? `${formatPrice(act.pricePerPerson, currencyCode)} por persona` : '';
+            const meta = [];
+            if (priceLabel) meta.push(`<span>${priceLabel}</span>`);
+            if (act.location) meta.push(`<span>Ubicacin: ${act.location}</span>`);
+            const card = document.createElement('article');
+            card.className = 'card swap';
+            card.innerHTML = `
+              <picture>
+                <source srcset="${imgUrl}" type="image/webp">
+                <img src="${imgUrl}" alt="${act.title || act.name || ''}" loading="lazy" width="800" height="500" style="height:180px;object-fit:cover">
+              </picture>
+              <div class="card-body">
+                ${act.durationLabel ? `<div class="pill">${act.durationLabel}</div>` : ''}
+                <h3>${act.title || act.name || ''}</h3>
+                <small class="muted-text">${(act.type || 'tour').toUpperCase()}</small>
+                ${act.description ? `<p class="muted">${act.description}</p>` : ''}
+                ${meta.length ? `<div class="card-meta">${meta.join('')}</div>` : ''}
+                <button class="activities-add-btn" type="button">Agregar a mi viaje</button>
+              </div>`;
+            const button = card.querySelector('.activities-add-btn');
+            if (button) {
+              button.addEventListener('click', (event) => {
+                event.preventDefault();
+                if (window.VIVE_CART && typeof window.VIVE_CART.addActivity === 'function') {
+                  window.VIVE_CART.addActivity(act);
+                }
+                const originalLabel = button.textContent;
+                button.textContent = 'Agregado';
+                button.disabled = true;
+                setTimeout(() => {
+                  button.textContent = originalLabel || 'Agregar a mi viaje';
+                  button.disabled = false;
+                }, 1600);
+              });
+            }
+            activitiesTrack.appendChild(card);
+          });
+          const scrollAmount = () => {
+            const card = activitiesTrack.querySelector('.card');
+            if (!card) return 0;
+            return card.getBoundingClientRect().width + 16;
+          };
+          if (activitiesPrev) {
+            activitiesPrev.disabled = false;
+            activitiesPrev.onclick = () => activitiesTrack.scrollBy({ left: -scrollAmount(), behavior: 'smooth' });
+          }
+          if (activitiesNext) {
+            activitiesNext.disabled = false;
+            activitiesNext.onclick = () => activitiesTrack.scrollBy({ left: scrollAmount(), behavior: 'smooth' });
+          }
+        }
+      }
+
+      lodgingsTitle.textContent=T.lodgings.title; lodgingsDesc.textContent=T.lodgings.desc;
+      if (!Array.isArray(R.lodgings) || !R.lodgings.length) {
+        if (lodgingsGridEl) {
+          const emptyMsg = document.createElement('p');
+          emptyMsg.className = 'muted swap';
+          emptyMsg.textContent = 'No hay hospedajes disponibles para esta compaa.';
+          lodgingsGridEl.innerHTML = '';
+          lodgingsGridEl.appendChild(emptyMsg);
+        }
+      } else if (lodgingsGridEl) {
+        lodgingsGridEl.innerHTML = '';
+        R.lodgings.forEach(l=>{
+          const first=l.images[0]||'https://picsum.photos/seed/fallback/1200/800';
+          const el=document.createElement('article'); el.className='card swap';
+          el.innerHTML=`<picture><source srcset="${first}" type="image/webp"><img src="${first}" alt="${l.name}" loading="lazy" width="800" height="500" style="height:140px;object-fit:cover"></picture><div class="body"><h3>${l.name}</h3><p class="muted">${T.lodgings.idPrefix} <code>${l.id}</code></p></div>`;
+          lodgingsGridEl.appendChild(el);
+        });
+      }
+
+      // FAQ desde seo.js
+      const faqWrap=document.getElementById('faqWrap');
+      (S.faq||[]).forEach(item=>{ const det=document.createElement('details'); det.className='swap'; const sum=document.createElement('summary'); sum.textContent=item.q; const p=document.createElement('p'); p.textContent=item.a; det.appendChild(sum); det.appendChild(p); faqWrap.appendChild(det); });
+
+      // Footer
+      footerTagline.textContent=T.footer.tagline;
+      document.getElementById('footerExploreHeading').textContent="Explora";
+      document.getElementById('footerContactHeading').textContent=T.footer.contactHeading;
+      document.getElementById('footerExplore1').textContent=T.nav.activities;
+      document.getElementById('footerExplore2').textContent=T.nav.lodgings;
+      document.getElementById('footerExplore3').textContent="FAQ";
+      document.getElementById('footerContactLines').innerHTML=T.footer.contactLines.join('<br>');
+      document.getElementById('footerNAP').innerHTML=`Puerto Escondido, Oaxaca, Mxico<br><a href="tel:${(S.phone||'').replace(/[^+\d]/g,'')}">${S.phone||''}</a>  <a href="${S.socials?.whatsapp||'#'}" target="_blank" rel="noopener">WhatsApp</a><br>Horario: ${S.businessHours||'Mo-Su 09:00-20:00'}  <a href="https://maps.google.com/?q=Puerto+Escondido" target="_blank" rel="noopener">Cmo llegar</a>`;
+
+      // Mini-booker sticky
+      new IntersectionObserver(([e])=>{ document.body.classList.toggle('booker-in-header', !e.isIntersecting); }, {threshold:0}).observe(document.getElementById('hero'));
+
+      /* Lightbox: pausar rotacin*/
+      const lb=lightbox, lbImg=lbImage, lbCap=lbCaption;
+      function showAt(i){ if(!currentSet.length) return; currentIndex=(i+currentSet.length)%currentSet.length; const it=currentSet[currentIndex]; lbImg.src=it.src; lbImg.alt=it.lodgingName; lbCap.textContent=it.lodgingName; }
+      window.openLightbox=(i)=>{ showAt(i); lb.hidden=false; document.body.style.overflow='hidden'; restartProgress(); pauseRotation(); };
+      function closeLightbox(){ lb.hidden=true; document.body.style.overflow=''; startRotation(); }
+      lbPrev.addEventListener('click', ()=> showAt(currentIndex-1));
+      lbNext.addEventListener('click', ()=> showAt(currentIndex+1));
+      lbClose.addEventListener('click', closeLightbox);
+      lb.addEventListener('click', e=>{ if(!e.target.closest('.lb-inner')) closeLightbox(); });
+      document.addEventListener('keydown', e=>{ if(lb.hidden) return; if(e.key==='Escape') closeLightbox(); if(e.key==='ArrowLeft') showAt(currentIndex-1); if(e.key==='ArrowRight') showAt(currentIndex+1); });
+
+      /* Buscador simple */
+      const activityIndex = (R.activities||[]).map(a=>({type:'Actividad',title:a.title||a.name||a.id,anchor:'#activities'}));
+      const idx=[...(R.lodgings||[]).map(l=>({type:"Hospedaje",title:l.name,anchor:"#lodgings"})), ...activityIndex];
+      function renderSearch(q){ const out=document.getElementById('siteSearchResults'); if(!q){out.innerHTML=""; return;} const r=idx.filter(i=>i.title.toLowerCase().includes(q.toLowerCase())); out.innerHTML=r.length?`<ul class="swap">${r.map(i=>`<li><a href="${i.anchor}" rel="noopener">${i.title}</a> <span class="muted">(${i.type})</span></li>`).join("")}</ul>`:`<p class="muted swap">Sin resultados para ${q}.</p>`; }
+      siteSearchForm.addEventListener('submit', e=>{ e.preventDefault(); renderSearch(siteSearchInput.value.trim()); });
+
+      /* Detectar overlay de calculadora para pausar rotacin */
+      let calcObserved=false;
+      const rootObs=new MutationObserver(()=> {
+        if(calcObserved) return;
+        const ov=document.getElementById('calcOverlay');
+        if(ov){
+          calcObserved=true;
+          const manage=()=>{ const visible=getComputedStyle(ov).display!=='none'; if(visible){ restartProgress(); pauseRotation(); } else { startRotation(); } };
+          manage();
+          new MutationObserver(manage).observe(ov,{attributes:true,attributeFilter:['style']});
+          rootObs.disconnect();
+        }
+      });
+      rootObs.observe(document.body,{childList:true,subtree:true});
+    });
+  </script>
+</body>
+</html>

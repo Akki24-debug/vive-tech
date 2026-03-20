@@ -1,0 +1,13 @@
+﻿# Web/Node
+node_modules/
+dist/
+build/
+.cache/
+.tmp/
+*.log
+.env
+.env.*
+# IDE y SO
+.vscode/
+.DS_Store
+Thumbs.db

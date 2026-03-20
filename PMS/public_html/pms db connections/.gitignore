@@ -1,0 +1,3 @@
+# Ignore only local overrides and logs. config.php is tracked with shared credentials.
+config.local.php
+*.log

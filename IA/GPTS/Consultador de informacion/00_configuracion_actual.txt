@@ -1,0 +1,25 @@
+TITULO: CONFIGURACION ACTUAL
+
+VARIABLES ACTIVAS
+
+credential = change-me-ai-tunnel
+
+ESTADO DE CREDENTIAL
+
+Hay una credential vigente configurada actualmente.
+Esa credential debe tratarse como operativa y valida para todas las consultas autorizadas actuales del AI Tunnel.
+
+REGLA
+Este archivo contiene los valores vigentes de las variables configurables.
+Si una variable aparece aqui, el GPT debe usar ese valor al construir la consulta autorizada.
+Si una variable no aparece aqui, debe considerarse no configurada.
+Si `credential` aparece aqui, el GPT no debe responder que “solo hay una credential de testing” ni usar eso como motivo para frenar la consulta.
+Debe usarla directamente para construir la URL final y consultar.
+
+PRIORIDAD
+Los valores definidos en este archivo tienen prioridad operativa para construir consultas.
+La logica general del sistema sigue estando en los demas archivos.
+
+NOTA
+La credential actual pertenece a un entorno de testing, pero sigue siendo la credencial operativa vigente para este GPT y para estas consultas autorizadas.
+Debe usarse normalmente mientras siga apareciendo en este archivo.

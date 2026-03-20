@@ -1,0 +1,6380 @@
+<?php
+$moduleKey = 'reservation_wizard';
+require_once __DIR__ . '/../services/RateplanPricingService.php';
+$requestedReservationId = isset($_REQUEST['wizard_reservation_id']) ? (int)$_REQUEST['wizard_reservation_id'] : 0;
+$isReplaceLodgingRequest = (int)(isset($_REQUEST['wizard_replace_lodging']) ? $_REQUEST['wizard_replace_lodging'] : 0) === 1;
+$currentUser = pms_current_user();
+if (!$currentUser) {
+    echo '<p class="error">Sesión inválida.</p>';
+    return;
+}
+
+$companyCode = isset($currentUser['company_code']) ? (string)$currentUser['company_code'] : '';
+$companyId   = isset($currentUser['company_id']) ? (int)$currentUser['company_id'] : 0;
+$actorUserId = isset($currentUser['id_user']) ? (int)$currentUser['id_user'] : null;
+$rwRateplanPricingService = new RateplanPricingService(pms_get_connection());
+
+if ($companyCode === '' || $companyId <= 0) {
+    echo '<p class="error">No ha sido posible determinar la empresa actual.</p>';
+    return;
+}
+if ($requestedReservationId > 0 || $isReplaceLodgingRequest) {
+    pms_require_permission('reservations.edit');
+} else {
+    pms_require_permission('reservations.create');
+}
+
+/* Helpers */
+function rw_format_money($cents)
+{
+    return '$' . number_format(((float)$cents) / 100, 2, '.', ',') . ' MXN';
+}
+
+function rw_rooms_by_property($rooms)
+{
+    $out = array();
+    foreach ($rooms as $room) {
+        $p = isset($room['property_code']) ? strtoupper((string)$room['property_code']) : '';
+        if ($p === '') continue;
+        if (!isset($out[$p])) $out[$p] = array();
+        $out[$p][] = $room;
+    }
+    return $out;
+}
+
+function rw_categories_by_property($categories)
+{
+    $out = array();
+    foreach ($categories as $cat) {
+        $p = isset($cat['property_code']) ? strtoupper((string)$cat['property_code']) : '';
+        if ($p === '') continue;
+        if (!isset($out[$p])) $out[$p] = array();
+        $out[$p][] = $cat;
+    }
+    return $out;
+}
+
+function rw_find_room(array $rooms, $propertyCode, $roomCode)
+{
+    $p = strtoupper((string)$propertyCode);
+    $r = strtoupper((string)$roomCode);
+    foreach ($rooms as $room) {
+        $rp = isset($room['property_code']) ? strtoupper((string)$room['property_code']) : '';
+        $rc = isset($room['code']) ? strtoupper((string)$room['code']) : '';
+        if ($rp === $p && $rc === $r) {
+            return $room;
+        }
+    }
+    return null;
+}
+
+function rw_parse_ids($raw)
+{
+    $values = is_array($raw) ? $raw : explode(',', (string)$raw);
+    $out = array();
+    foreach ($values as $value) {
+        $id = (int)trim((string)$value);
+        if ($id > 0) {
+            $out[$id] = true;
+        }
+    }
+    return array_keys($out);
+}
+
+function rw_concept_display_label(array $row)
+{
+    $item = trim((string)(isset($row['item_name']) ? $row['item_name'] : ''));
+    return $item;
+}
+
+function rw_catalog_default_cents(array $row)
+{
+    $defaultAmount = isset($row['default_amount_cents']) ? (int)$row['default_amount_cents'] : 0;
+    $defaultUnit = isset($row['default_unit_price_cents']) ? (int)$row['default_unit_price_cents'] : 0;
+    return $defaultAmount > 0 ? $defaultAmount : $defaultUnit;
+}
+
+function rw_catalog_rows($companyCode, $propertyCode)
+{
+    $rows = array();
+    try {
+        $pdo = pms_get_connection();
+        $sql = 'SELECT
+                    lic.id_line_item_catalog AS id_sale_item_catalog,
+                    lic.catalog_type,
+                    lic.id_category,
+                    cat.category_name AS category,
+                    parent_map.parent_first_id AS id_parent_sale_item_catalog,
+                    parent_map.parent_item_ids,
+                    parent_map.add_to_father_total,
+                    lic.item_name,
+                    lic.description,
+                    lic.default_unit_price_cents,
+                    lic.default_amount_cents,
+                    parent_map.is_percent,
+                    parent_map.percent_value,
+                    lic.show_in_folio,
+                    lic.is_active,
+                    prop.code AS property_code
+                FROM line_item_catalog lic
+                JOIN sale_item_category cat
+                  ON cat.id_sale_item_category = lic.id_category
+                 AND cat.deleted_at IS NULL
+                JOIN company comp ON comp.id_company = cat.id_company
+                LEFT JOIN (
+                  SELECT
+                    lcp.id_sale_item_catalog,
+                    GROUP_CONCAT(DISTINCT lcp.id_parent_sale_item_catalog ORDER BY lcp.id_parent_sale_item_catalog) AS parent_item_ids,
+                    MIN(lcp.id_parent_sale_item_catalog) AS parent_first_id,
+                    MIN(lcp.add_to_father_total) AS add_to_father_total,
+                    MAX(CASE WHEN lcp.percent_value IS NOT NULL AND lcp.percent_value <> 0 THEN 1 ELSE 0 END) AS is_percent,
+                    MIN(lcp.percent_value) AS percent_value
+                  FROM line_item_catalog_parent lcp
+                  WHERE lcp.deleted_at IS NULL
+                    AND lcp.is_active = 1
+                  GROUP BY lcp.id_sale_item_catalog
+                ) parent_map ON parent_map.id_sale_item_catalog = lic.id_line_item_catalog
+                LEFT JOIN property prop ON prop.id_property = cat.id_property
+                WHERE comp.code = ?
+                  AND lic.deleted_at IS NULL
+                  AND lic.is_active = 1
+                  AND lic.catalog_type IN (\'sale_item\',\'payment\',\'obligation\',\'income\',\'tax_rule\')
+                  AND (? IS NULL OR ? = \'\' OR prop.code IS NULL OR prop.code = ?)
+                ORDER BY cat.category_name, lic.item_name';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute(array($companyCode, $propertyCode, $propertyCode, $propertyCode));
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $rows = array();
+    }
+    return $rows;
+}
+
+function rw_catalog_rows_by_ids($companyCode, array $ids)
+{
+    $rows = array();
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($id) {
+        return $id > 0;
+    })));
+    if (!$ids) {
+        return $rows;
+    }
+    try {
+        $pdo = pms_get_connection();
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql = 'SELECT
+                    lic.id_line_item_catalog AS id_sale_item_catalog,
+                    lic.catalog_type,
+                    lic.id_category,
+                    cat.category_name AS category,
+                    parent_map.parent_first_id AS id_parent_sale_item_catalog,
+                    parent_map.parent_item_ids,
+                    parent_map.add_to_father_total,
+                    lic.item_name,
+                    lic.description,
+                    lic.default_unit_price_cents,
+                    lic.default_amount_cents,
+                    parent_map.is_percent,
+                    parent_map.percent_value,
+                    lic.show_in_folio,
+                    lic.is_active,
+                    prop.code AS property_code
+                FROM line_item_catalog lic
+                LEFT JOIN sale_item_category cat
+                  ON cat.id_sale_item_category = lic.id_category
+                 AND cat.deleted_at IS NULL
+                LEFT JOIN (
+                  SELECT
+                    lcp.id_sale_item_catalog,
+                    GROUP_CONCAT(DISTINCT lcp.id_parent_sale_item_catalog ORDER BY lcp.id_parent_sale_item_catalog) AS parent_item_ids,
+                    MIN(lcp.id_parent_sale_item_catalog) AS parent_first_id,
+                    MIN(lcp.add_to_father_total) AS add_to_father_total,
+                    MAX(CASE WHEN lcp.percent_value IS NOT NULL AND lcp.percent_value <> 0 THEN 1 ELSE 0 END) AS is_percent,
+                    MIN(lcp.percent_value) AS percent_value
+                  FROM line_item_catalog_parent lcp
+                  WHERE lcp.deleted_at IS NULL
+                    AND lcp.is_active = 1
+                  GROUP BY lcp.id_sale_item_catalog
+                ) parent_map ON parent_map.id_sale_item_catalog = lic.id_line_item_catalog
+                LEFT JOIN property prop ON prop.id_property = cat.id_property
+                WHERE lic.id_line_item_catalog IN (' . $placeholders . ')
+                  AND lic.deleted_at IS NULL
+                  AND lic.is_active = 1
+                ORDER BY lic.item_name';
+        $params = $ids;
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $rows = array();
+    }
+    return $rows;
+}
+
+function rw_fetch_lodging_catalog_ids($companyCode, $propertyCode, $companyId = 0)
+{
+    $allowedIds = array();
+    $propertyCode = strtoupper(trim((string)$propertyCode));
+    $companyId = (int)$companyId;
+
+    if ($propertyCode !== '') {
+        try {
+            $settings = pms_call_procedure('sp_pms_settings_data', array($companyCode, $propertyCode));
+            $row = isset($settings[0][0]) ? $settings[0][0] : null;
+            if ($row && isset($row['lodging_catalog_ids']) && $row['lodging_catalog_ids'] !== '') {
+                $allowedIds = array_filter(array_map('intval', explode(',', (string)$row['lodging_catalog_ids'])));
+            }
+        } catch (Exception $e) {
+            $allowedIds = array();
+        }
+    }
+
+    if (!$allowedIds) {
+        try {
+            $fallback = pms_call_procedure('sp_pms_settings_data', array($companyCode, null));
+            $frow = isset($fallback[0][0]) ? $fallback[0][0] : null;
+            if ($frow && isset($frow['lodging_catalog_ids']) && $frow['lodging_catalog_ids'] !== '') {
+                $allowedIds = array_filter(array_map('intval', explode(',', (string)$frow['lodging_catalog_ids'])));
+            }
+        } catch (Exception $e) {
+            $allowedIds = array();
+        }
+    }
+
+    // Fallback defensivo: leer directo de tablas de settings cuando el SP no devuelve ids.
+    if (!$allowedIds) {
+        try {
+            $pdo = pms_get_connection();
+            if ($companyId <= 0) {
+                $stmtCompany = $pdo->prepare('SELECT id_company FROM company WHERE UPPER(code) = UPPER(?) LIMIT 1');
+                $stmtCompany->execute(array($companyCode));
+                $companyId = (int)$stmtCompany->fetchColumn();
+            }
+
+            if ($companyId > 0) {
+                $propertyId = 0;
+                if ($propertyCode !== '') {
+                    $stmtProperty = $pdo->prepare('SELECT id_property FROM property WHERE id_company = ? AND code = ? AND deleted_at IS NULL LIMIT 1');
+                    $stmtProperty->execute(array($companyId, $propertyCode));
+                    $propertyId = (int)$stmtProperty->fetchColumn();
+                }
+
+                if ($propertyId > 0) {
+                    $stmtLocal = $pdo->prepare(
+                        'SELECT DISTINCT id_sale_item_catalog
+                           FROM pms_settings_lodging_catalog
+                          WHERE id_company = ?
+                            AND id_property = ?
+                            AND deleted_at IS NULL
+                            AND is_active = 1'
+                    );
+                    $stmtLocal->execute(array($companyId, $propertyId));
+                    $allowedIds = array_values(array_filter(array_map('intval', $stmtLocal->fetchAll(PDO::FETCH_COLUMN))));
+                }
+
+                if (!$allowedIds) {
+                    $stmtGlobal = $pdo->prepare(
+                        'SELECT DISTINCT id_sale_item_catalog
+                           FROM pms_settings_lodging_catalog
+                          WHERE id_company = ?
+                            AND (id_property IS NULL OR id_property = 0)
+                            AND deleted_at IS NULL
+                            AND is_active = 1'
+                    );
+                    $stmtGlobal->execute(array($companyId));
+                    $allowedIds = array_values(array_filter(array_map('intval', $stmtGlobal->fetchAll(PDO::FETCH_COLUMN))));
+                }
+
+                if (!$allowedIds) {
+                    $stmtAny = $pdo->prepare(
+                        'SELECT DISTINCT id_sale_item_catalog
+                           FROM pms_settings_lodging_catalog
+                          WHERE id_company = ?
+                            AND deleted_at IS NULL
+                            AND is_active = 1'
+                    );
+                    $stmtAny->execute(array($companyId));
+                    $allowedIds = array_values(array_filter(array_map('intval', $stmtAny->fetchAll(PDO::FETCH_COLUMN))));
+                }
+            }
+        } catch (Exception $e) {
+            $allowedIds = array();
+        }
+    }
+    return $allowedIds;
+}
+
+function rw_pick_default_lodging_catalog($companyCode, $propertyCode, $companyId = 0)
+{
+    $propertyCode = strtoupper(trim((string)$propertyCode));
+    $allowedIds = rw_fetch_lodging_catalog_ids($companyCode, $propertyCode, $companyId);
+    if (!$allowedIds) {
+        return 0;
+    }
+    $allowedMap = array();
+    foreach ($allowedIds as $lid) {
+        $allowedMap[(int)$lid] = true;
+    }
+    try {
+        $conceptSets = pms_call_procedure('sp_sale_item_catalog_data', array(
+            $companyCode,
+            $propertyCode,
+            0,
+            0,
+            0
+        ));
+        $conceptRows = isset($conceptSets[0]) ? $conceptSets[0] : array();
+        if (!$conceptRows) {
+            $conceptRows = rw_catalog_rows($companyCode, $propertyCode);
+        }
+        foreach ($conceptRows as $c) {
+            $cid = isset($c['id_sale_item_catalog']) ? (int)$c['id_sale_item_catalog'] : 0;
+            if ($cid > 0 && isset($allowedMap[$cid])) {
+                return $cid;
+            }
+        }
+    } catch (Exception $e) {
+        $conceptRows = rw_catalog_rows($companyCode, $propertyCode);
+        foreach ($conceptRows as $c) {
+            $cid = isset($c['id_sale_item_catalog']) ? (int)$c['id_sale_item_catalog'] : 0;
+            if ($cid > 0 && isset($allowedMap[$cid])) {
+                return $cid;
+            }
+        }
+        return (int)$allowedIds[0];
+    }
+    return (int)$allowedIds[0];
+}
+
+function rw_fetch_lodging_options_with_children($companyCode, $propertyCode, $companyId = 0)
+{
+    $propertyCode = strtoupper(trim((string)$propertyCode));
+    if ($propertyCode === '') {
+        return array();
+    }
+
+    // Ruta principal: tomar exactamente lo configurado en settings (local + global).
+    try {
+        $pdo = pms_get_connection();
+        $companyId = (int)$companyId;
+        if ($companyId <= 0) {
+            $stmtCompany = $pdo->prepare('SELECT id_company FROM company WHERE UPPER(code) = UPPER(?) LIMIT 1');
+            $stmtCompany->execute(array($companyCode));
+            $companyId = (int)$stmtCompany->fetchColumn();
+        }
+        if ($companyId > 0) {
+            $propertyId = 0;
+            $stmtProperty = $pdo->prepare(
+                'SELECT id_property
+                   FROM property
+                  WHERE id_company = ?
+                    AND UPPER(code) = UPPER(?)
+                    AND deleted_at IS NULL
+                  LIMIT 1'
+            );
+            $stmtProperty->execute(array($companyId, $propertyCode));
+            $propertyId = (int)$stmtProperty->fetchColumn();
+
+            $sqlConfigured = 'SELECT DISTINCT
+                                lic.id_line_item_catalog AS id_sale_item_catalog,
+                                lic.item_name,
+                                lic.default_unit_price_cents,
+                                COALESCE(cat.category_name, \'\') AS category
+                              FROM pms_settings_lodging_catalog s
+                              JOIN line_item_catalog lic
+                                ON lic.id_line_item_catalog = s.id_sale_item_catalog
+                               AND lic.catalog_type = \'sale_item\'
+                               AND lic.deleted_at IS NULL
+                               AND lic.is_active = 1
+                              LEFT JOIN sale_item_category cat
+                                ON cat.id_sale_item_category = lic.id_category
+                               AND cat.deleted_at IS NULL
+                               AND cat.is_active = 1
+                             WHERE s.id_company = ?
+                               AND s.deleted_at IS NULL
+                               AND s.is_active = 1';
+
+            $paramsConfigured = array($companyId);
+            if ($propertyId > 0) {
+                $sqlConfigured .= ' AND (s.id_property = ? OR s.id_property IS NULL OR s.id_property = 0)';
+                $paramsConfigured[] = $propertyId;
+            } else {
+                $sqlConfigured .= ' AND (s.id_property IS NULL OR s.id_property = 0)';
+            }
+            $sqlConfigured .= ' ORDER BY lic.item_name';
+
+            $stmtConfigured = $pdo->prepare($sqlConfigured);
+            $stmtConfigured->execute($paramsConfigured);
+            $configuredRows = $stmtConfigured->fetchAll(PDO::FETCH_ASSOC);
+
+            if ($configuredRows) {
+                $allowedIds = array();
+                foreach ($configuredRows as $row) {
+                    $cid = isset($row['id_sale_item_catalog']) ? (int)$row['id_sale_item_catalog'] : 0;
+                    if ($cid > 0) {
+                        $allowedIds[$cid] = true;
+                    }
+                }
+
+                $fixedChildrenByParent = array();
+                $conceptRows = rw_catalog_rows($companyCode, $propertyCode);
+                foreach ($conceptRows as $c) {
+                    $parentIds = rw_parse_ids(isset($c['parent_item_ids']) ? $c['parent_item_ids'] : '');
+                    if (!$parentIds) {
+                        $legacyParentId = isset($c['id_parent_sale_item_catalog']) ? (int)$c['id_parent_sale_item_catalog'] : 0;
+                        if ($legacyParentId > 0) {
+                            $parentIds = array($legacyParentId);
+                        }
+                    }
+                    if (!$parentIds || !empty($c['is_percent'])) {
+                        continue;
+                    }
+                    foreach ($parentIds as $parentId) {
+                        if ($parentId <= 0) {
+                            continue;
+                        }
+                        if (!isset($fixedChildrenByParent[$parentId])) {
+                            $fixedChildrenByParent[$parentId] = array();
+                        }
+                        $fixedChildrenByParent[$parentId][] = $c;
+                    }
+                }
+
+                // Refuerzo: obtener derivados directo de line_item_catalog_parent.
+                $fixedChildrenByParentDb = array();
+                try {
+                    $parentIds = array_map('intval', array_keys($allowedIds));
+                    $parentIds = array_values(array_filter($parentIds, function ($id) { return $id > 0; }));
+                    if ($parentIds) {
+                        $placeholders = implode(',', array_fill(0, count($parentIds), '?'));
+                        $sqlChildren = 'SELECT
+                                            lcp.id_parent_sale_item_catalog AS parent_id,
+                                            child.id_line_item_catalog AS id_sale_item_catalog,
+                                            child.item_name,
+                                            child.default_unit_price_cents,
+                                            child.default_amount_cents
+                                        FROM line_item_catalog_parent lcp
+                                        JOIN line_item_catalog child
+                                         ON child.id_line_item_catalog = lcp.id_sale_item_catalog
+                                         AND child.catalog_type IN (\'sale_item\',\'tax_rule\',\'payment\',\'obligation\',\'income\')
+                                         AND child.deleted_at IS NULL
+                                         AND child.is_active = 1
+                                         AND (lcp.percent_value IS NULL OR lcp.percent_value = 0)
+                                        LEFT JOIN sale_item_category child_cat
+                                          ON child_cat.id_sale_item_category = child.id_category
+                                         AND child_cat.deleted_at IS NULL
+                                         AND child_cat.is_active = 1
+                                        WHERE lcp.id_parent_sale_item_catalog IN (' . $placeholders . ')
+                                          AND lcp.deleted_at IS NULL
+                                          AND lcp.is_active = 1';
+                        $paramsChildren = $parentIds;
+                        if ($propertyId > 0) {
+                            $sqlChildren .= ' AND (child_cat.id_property IS NULL OR child_cat.id_property = ?)';
+                            $paramsChildren[] = $propertyId;
+                        }
+                        $sqlChildren .= ' ORDER BY child.item_name';
+                        $stmtChildren = $pdo->prepare($sqlChildren);
+                        $stmtChildren->execute($paramsChildren);
+                        $rowsChildren = $stmtChildren->fetchAll(PDO::FETCH_ASSOC);
+                        foreach ($rowsChildren as $rowChild) {
+                            $pid = isset($rowChild['parent_id']) ? (int)$rowChild['parent_id'] : 0;
+                            if ($pid <= 0) {
+                                continue;
+                            }
+                            if (!isset($fixedChildrenByParentDb[$pid])) {
+                                $fixedChildrenByParentDb[$pid] = array();
+                            }
+                            $fixedChildrenByParentDb[$pid][] = $rowChild;
+                        }
+                    }
+                } catch (Exception $e) {
+                    $fixedChildrenByParentDb = array();
+                }
+
+                $lodgingOptions = array();
+                foreach ($configuredRows as $row) {
+                    $cid = isset($row['id_sale_item_catalog']) ? (int)$row['id_sale_item_catalog'] : 0;
+                    if ($cid <= 0 || !isset($allowedIds[$cid])) {
+                        continue;
+                    }
+                    $children = isset($fixedChildrenByParent[$cid]) ? $fixedChildrenByParent[$cid] : array();
+                    $dbChildren = isset($fixedChildrenByParentDb[$cid]) ? $fixedChildrenByParentDb[$cid] : array();
+                    $childrenById = array();
+                    foreach ($children as $childRow) {
+                        $childId = isset($childRow['id_sale_item_catalog']) ? (int)$childRow['id_sale_item_catalog'] : 0;
+                        if ($childId <= 0) {
+                            continue;
+                        }
+                        $childrenById[$childId] = array(
+                            'id' => $childId,
+                            'name' => isset($childRow['item_name']) ? (string)$childRow['item_name'] : '',
+                            'default_cents' => rw_catalog_default_cents($childRow),
+                            'tax_rule_ids' => ''
+                        );
+                    }
+                    foreach ($dbChildren as $childRow) {
+                        $childId = isset($childRow['id_sale_item_catalog']) ? (int)$childRow['id_sale_item_catalog'] : 0;
+                        if ($childId <= 0) {
+                            continue;
+                        }
+                        if (!isset($childrenById[$childId])) {
+                            $childrenById[$childId] = array(
+                                'id' => $childId,
+                                'name' => isset($childRow['item_name']) ? (string)$childRow['item_name'] : '',
+                                'default_cents' => rw_catalog_default_cents($childRow),
+                                'tax_rule_ids' => ''
+                            );
+                        }
+                    }
+                    $fixedChildren = array_values($childrenById);
+                    $child = !empty($fixedChildren) ? $fixedChildren[0] : null;
+                    $label = isset($row['item_name']) ? (string)$row['item_name'] : ('Concepto #' . $cid);
+                    $lodgingOptions[] = array(
+                        'id' => $cid,
+                        'label' => $label,
+                        'default_unit_price_cents' => isset($row['default_unit_price_cents']) ? (int)$row['default_unit_price_cents'] : 0,
+                        'child_id' => $child ? (int)$child['id'] : 0,
+                        'child_name' => $child ? (string)$child['name'] : '',
+                        'child_default_cents' => $child ? (int)$child['default_cents'] : 0,
+                        'child_tax_rule_ids' => '',
+                        'fixed_children' => $fixedChildren
+                    );
+                }
+                if ($lodgingOptions) {
+                    return $lodgingOptions;
+                }
+            }
+        }
+    } catch (Exception $e) {
+    }
+
+    $allowedIds = rw_fetch_lodging_catalog_ids($companyCode, $propertyCode, $companyId);
+    if (!$allowedIds) {
+        // Fallback directo y deterministico: leer conceptos activos configurados en settings.
+        try {
+            $pdo = pms_get_connection();
+            $companyId = (int)$companyId;
+            if ($companyId <= 0) {
+                $stmtCompany = $pdo->prepare('SELECT id_company FROM company WHERE UPPER(code) = UPPER(?) LIMIT 1');
+                $stmtCompany->execute(array($companyCode));
+                $companyId = (int)$stmtCompany->fetchColumn();
+            }
+            if ($companyId > 0) {
+                $stmtProperty = $pdo->prepare(
+                    'SELECT id_property
+                       FROM property
+                      WHERE id_company = ?
+                        AND UPPER(code) = UPPER(?)
+                        AND deleted_at IS NULL
+                      LIMIT 1'
+                );
+                $stmtProperty->execute(array($companyId, $propertyCode));
+                $propertyId = (int)$stmtProperty->fetchColumn();
+
+                $params = array($companyId);
+                $propertyFilter = '';
+                if ($propertyId > 0) {
+                    $propertyFilter = ' AND (s.id_property = ? OR s.id_property IS NULL OR s.id_property = 0)';
+                    $params[] = $propertyId;
+                } else {
+                    $propertyFilter = ' AND (s.id_property IS NULL OR s.id_property = 0)';
+                }
+
+                $stmtAllowed = $pdo->prepare(
+                    'SELECT DISTINCT s.id_sale_item_catalog
+                       FROM pms_settings_lodging_catalog s
+                       JOIN line_item_catalog lic
+                         ON lic.id_line_item_catalog = s.id_sale_item_catalog
+                        AND lic.catalog_type = \'sale_item\'
+                        AND lic.is_active = 1
+                        AND lic.deleted_at IS NULL
+                      WHERE s.id_company = ?
+                        AND s.is_active = 1
+                        AND s.deleted_at IS NULL'
+                    . $propertyFilter
+                );
+                $stmtAllowed->execute($params);
+                $allowedIds = array_values(array_filter(array_map('intval', $stmtAllowed->fetchAll(PDO::FETCH_COLUMN))));
+            }
+        } catch (Exception $e) {
+            $allowedIds = array();
+        }
+    }
+    if (!$allowedIds) {
+        return array();
+    }
+    $allowedMap = array();
+    foreach ($allowedIds as $lid) {
+        $allowedMap[(int)$lid] = true;
+    }
+
+    $fixedChildrenByParent = array();
+    $lodgingOptions = array();
+    try {
+        $conceptSets = pms_call_procedure('sp_sale_item_catalog_data', array(
+            $companyCode,
+            $propertyCode,
+            0,
+            0,
+            0
+        ));
+        $conceptRows = isset($conceptSets[0]) ? $conceptSets[0] : array();
+        if (!$conceptRows) {
+            $conceptRows = rw_catalog_rows($companyCode, $propertyCode);
+        }
+
+        foreach ($conceptRows as $c) {
+            $parentIds = rw_parse_ids(isset($c['parent_item_ids']) ? $c['parent_item_ids'] : '');
+            if (!$parentIds) {
+                $legacyParentId = isset($c['id_parent_sale_item_catalog']) ? (int)$c['id_parent_sale_item_catalog'] : 0;
+                if ($legacyParentId > 0) {
+                    $parentIds = array($legacyParentId);
+                }
+            }
+            if (!$parentIds) {
+                continue;
+            }
+            if (!empty($c['is_percent'])) {
+                continue;
+            }
+            foreach ($parentIds as $parentId) {
+                if ($parentId <= 0) {
+                    continue;
+                }
+                if (!isset($fixedChildrenByParent[$parentId])) {
+                    $fixedChildrenByParent[$parentId] = array();
+                }
+                $fixedChildrenByParent[$parentId][] = $c;
+            }
+        }
+
+        foreach ($conceptRows as $c) {
+            $cid = isset($c['id_sale_item_catalog']) ? (int)$c['id_sale_item_catalog'] : 0;
+            if ($cid <= 0) {
+                continue;
+            }
+            if (!isset($allowedMap[$cid])) {
+                continue;
+            }
+            $label = rw_concept_display_label($c);
+            $children = isset($fixedChildrenByParent[$cid]) ? $fixedChildrenByParent[$cid] : array();
+            $fixedChildren = array();
+            foreach ($children as $childRow) {
+                $childId = isset($childRow['id_sale_item_catalog']) ? (int)$childRow['id_sale_item_catalog'] : 0;
+                if ($childId <= 0) {
+                    continue;
+                }
+                $fixedChildren[] = array(
+                    'id' => $childId,
+                    'name' => isset($childRow['item_name']) ? (string)$childRow['item_name'] : '',
+                    'label' => rw_concept_display_label($childRow),
+                    'default_cents' => rw_catalog_default_cents($childRow),
+                    'tax_rule_ids' => ''
+                );
+            }
+            $child = !empty($fixedChildren) ? $fixedChildren[0] : null;
+            $lodgingOptions[] = array(
+                'id' => $cid,
+                'label' => $label,
+                'default_unit_price_cents' => isset($c['default_unit_price_cents']) ? (int)$c['default_unit_price_cents'] : 0,
+                'child_id' => $child ? (int)$child['id'] : 0,
+                'child_name' => $child ? (string)$child['name'] : '',
+                'child_label' => $child ? (string)$child['label'] : '',
+                'child_default_cents' => $child ? (int)$child['default_cents'] : 0,
+                'child_tax_rule_ids' => '',
+                'fixed_children' => $fixedChildren
+            );
+        }
+    } catch (Exception $e) {
+        $conceptRows = rw_catalog_rows($companyCode, $propertyCode);
+        if (!$conceptRows) {
+            return array();
+        }
+        foreach ($conceptRows as $c) {
+            $parentIds = rw_parse_ids(isset($c['parent_item_ids']) ? $c['parent_item_ids'] : '');
+            if (!$parentIds) {
+                $legacyParentId = isset($c['id_parent_sale_item_catalog']) ? (int)$c['id_parent_sale_item_catalog'] : 0;
+                if ($legacyParentId > 0) {
+                    $parentIds = array($legacyParentId);
+                }
+            }
+            if (!$parentIds || !empty($c['is_percent'])) {
+                continue;
+            }
+            foreach ($parentIds as $parentId) {
+                if ($parentId <= 0) {
+                    continue;
+                }
+                if (!isset($fixedChildrenByParent[$parentId])) {
+                    $fixedChildrenByParent[$parentId] = array();
+                }
+                $fixedChildrenByParent[$parentId][] = $c;
+            }
+        }
+        foreach ($conceptRows as $c) {
+            $cid = isset($c['id_sale_item_catalog']) ? (int)$c['id_sale_item_catalog'] : 0;
+            if ($cid <= 0 || !isset($allowedMap[$cid])) {
+                continue;
+            }
+            $label = rw_concept_display_label($c);
+            $children = isset($fixedChildrenByParent[$cid]) ? $fixedChildrenByParent[$cid] : array();
+            $fixedChildren = array();
+            foreach ($children as $childRow) {
+                $childId = isset($childRow['id_sale_item_catalog']) ? (int)$childRow['id_sale_item_catalog'] : 0;
+                if ($childId <= 0) continue;
+                $fixedChildren[] = array(
+                    'id' => $childId,
+                    'name' => isset($childRow['item_name']) ? (string)$childRow['item_name'] : '',
+                    'label' => rw_concept_display_label($childRow),
+                    'default_cents' => rw_catalog_default_cents($childRow),
+                    'tax_rule_ids' => ''
+                );
+            }
+            $child = !empty($fixedChildren) ? $fixedChildren[0] : null;
+            $lodgingOptions[] = array(
+                'id' => $cid,
+                'label' => $label,
+                'default_unit_price_cents' => isset($c['default_unit_price_cents']) ? (int)$c['default_unit_price_cents'] : 0,
+                'child_id' => $child ? (int)$child['id'] : 0,
+                'child_name' => $child ? (string)$child['name'] : '',
+                'child_label' => $child ? (string)$child['label'] : '',
+                'child_default_cents' => $child ? (int)$child['default_cents'] : 0,
+                'child_tax_rule_ids' => '',
+                'fixed_children' => $fixedChildren
+            );
+        }
+        return $lodgingOptions;
+    }
+
+    if (!$lodgingOptions && $allowedIds) {
+        $conceptRows = rw_catalog_rows_by_ids($companyCode, $allowedIds);
+        if ($conceptRows) {
+            foreach ($conceptRows as $c) {
+                $parentIds = rw_parse_ids(isset($c['parent_item_ids']) ? $c['parent_item_ids'] : '');
+                if (!$parentIds) {
+                    $legacyParentId = isset($c['id_parent_sale_item_catalog']) ? (int)$c['id_parent_sale_item_catalog'] : 0;
+                    if ($legacyParentId > 0) {
+                        $parentIds = array($legacyParentId);
+                    }
+                }
+                if (!$parentIds || !empty($c['is_percent'])) {
+                    continue;
+                }
+                foreach ($parentIds as $parentId) {
+                    if ($parentId <= 0) {
+                        continue;
+                    }
+                    if (!isset($fixedChildrenByParent[$parentId])) {
+                        $fixedChildrenByParent[$parentId] = array();
+                    }
+                    $fixedChildrenByParent[$parentId][] = $c;
+                }
+            }
+            foreach ($conceptRows as $c) {
+                $cid = isset($c['id_sale_item_catalog']) ? (int)$c['id_sale_item_catalog'] : 0;
+                if ($cid <= 0 || !isset($allowedMap[$cid])) {
+                    continue;
+                }
+                $label = rw_concept_display_label($c);
+                $children = isset($fixedChildrenByParent[$cid]) ? $fixedChildrenByParent[$cid] : array();
+                $fixedChildren = array();
+                foreach ($children as $childRow) {
+                    $childId = isset($childRow['id_sale_item_catalog']) ? (int)$childRow['id_sale_item_catalog'] : 0;
+                    if ($childId <= 0) {
+                        continue;
+                    }
+                    $fixedChildren[] = array(
+                        'id' => $childId,
+                        'name' => isset($childRow['item_name']) ? (string)$childRow['item_name'] : '',
+                        'label' => rw_concept_display_label($childRow),
+                        'default_cents' => rw_catalog_default_cents($childRow),
+                        'tax_rule_ids' => ''
+                    );
+                }
+                $child = !empty($fixedChildren) ? $fixedChildren[0] : null;
+                $lodgingOptions[] = array(
+                    'id' => $cid,
+                    'label' => $label,
+                    'default_unit_price_cents' => isset($c['default_unit_price_cents']) ? (int)$c['default_unit_price_cents'] : 0,
+                    'child_id' => $child ? (int)$child['id'] : 0,
+                    'child_name' => $child ? (string)$child['name'] : '',
+                    'child_label' => $child ? (string)$child['label'] : '',
+                    'child_default_cents' => $child ? (int)$child['default_cents'] : 0,
+                    'child_tax_rule_ids' => '',
+                    'fixed_children' => $fixedChildren
+                );
+            }
+        }
+    }
+
+    if (!$lodgingOptions && $allowedIds) {
+        try {
+            $pdo = pms_get_connection();
+            $placeholders = implode(',', array_fill(0, count($allowedIds), '?'));
+            $stmt = $pdo->prepare(
+                'SELECT id_line_item_catalog AS id_sale_item_catalog, item_name, default_unit_price_cents, default_amount_cents
+                   FROM line_item_catalog
+                  WHERE id_line_item_catalog IN (' . $placeholders . ')
+                    AND deleted_at IS NULL
+                    AND is_active = 1
+                    AND catalog_type = \'sale_item\'
+                  ORDER BY item_name'
+            );
+            $stmt->execute(array_values($allowedIds));
+            $rawRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rawRows as $r) {
+                $cid = isset($r['id_sale_item_catalog']) ? (int)$r['id_sale_item_catalog'] : 0;
+                if ($cid <= 0 || !isset($allowedMap[$cid])) {
+                    continue;
+                }
+                $lodgingOptions[] = array(
+                    'id' => $cid,
+                    'label' => (string)(isset($r['item_name']) ? $r['item_name'] : ('Concepto #' . $cid)),
+                    'default_unit_price_cents' => rw_catalog_default_cents($r),
+                    'child_id' => 0,
+                    'child_name' => '',
+                    'child_label' => '',
+                    'child_default_cents' => 0,
+                    'child_tax_rule_ids' => '',
+                    'fixed_children' => array()
+                );
+            }
+        } catch (Exception $e) {
+        }
+    }
+
+    return $lodgingOptions;
+}
+
+function rw_fetch_fixed_children_by_parent($companyCode, $propertyCode, $companyId = 0)
+{
+    $map = array();
+    $propertyCode = strtoupper(trim((string)$propertyCode));
+    if ($propertyCode === '') {
+        return $map;
+    }
+    try {
+        $pdo = pms_get_connection();
+        $companyId = (int)$companyId;
+        if ($companyId <= 0) {
+            $stmtCompany = $pdo->prepare('SELECT id_company FROM company WHERE UPPER(code) = UPPER(?) LIMIT 1');
+            $stmtCompany->execute(array($companyCode));
+            $companyId = (int)$stmtCompany->fetchColumn();
+        }
+        if ($companyId <= 0) {
+            return $map;
+        }
+
+        $propertyId = 0;
+        $stmtProperty = $pdo->prepare(
+            'SELECT id_property
+               FROM property
+              WHERE id_company = ?
+                AND UPPER(code) = UPPER(?)
+                AND deleted_at IS NULL
+              LIMIT 1'
+        );
+        $stmtProperty->execute(array($companyId, $propertyCode));
+        $propertyId = (int)$stmtProperty->fetchColumn();
+
+        $sql = 'SELECT
+                  lcp.id_parent_sale_item_catalog AS parent_catalog_id,
+                  child.id_line_item_catalog AS id_sale_item_catalog,
+                  child.item_name,
+                  child.default_unit_price_cents,
+                  child.default_amount_cents,
+                  cat.category_name AS category
+                FROM line_item_catalog_parent lcp
+                JOIN line_item_catalog child
+                  ON child.id_line_item_catalog = lcp.id_sale_item_catalog
+                 AND child.deleted_at IS NULL
+                 AND child.is_active = 1
+                 AND child.catalog_type IN (\'sale_item\',\'tax_rule\',\'payment\',\'obligation\',\'income\')
+                LEFT JOIN sale_item_category cat
+                  ON cat.id_sale_item_category = child.id_category
+                 AND cat.deleted_at IS NULL
+                 AND cat.is_active = 1
+                WHERE lcp.deleted_at IS NULL
+                  AND lcp.is_active = 1
+                  AND (lcp.percent_value IS NULL OR lcp.percent_value = 0)';
+        $params = array();
+        // No recortar por propiedad aquí: el wizard debe poder renderizar
+        // todo el árbol no porcentual bajo cada padre seleccionado.
+        // El control de "qué raíz puede elegirse" ya lo hace settings.
+        $sql .= ' ORDER BY lcp.id_parent_sale_item_catalog, child.item_name';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $row) {
+            $parentId = isset($row['parent_catalog_id']) ? (int)$row['parent_catalog_id'] : 0;
+            $childId = isset($row['id_sale_item_catalog']) ? (int)$row['id_sale_item_catalog'] : 0;
+            if ($parentId <= 0 || $childId <= 0) {
+                continue;
+            }
+            if (!isset($map[$parentId])) {
+                $map[$parentId] = array();
+            }
+            if (isset($map[$parentId][$childId])) {
+                continue;
+            }
+            $label = rw_concept_display_label(array(
+                'item_name' => isset($row['item_name']) ? (string)$row['item_name'] : '',
+                'category' => isset($row['category']) ? (string)$row['category'] : ''
+            ));
+            $map[$parentId][$childId] = array(
+                'id' => $childId,
+                'parent_catalog_id' => $parentId,
+                'name' => isset($row['item_name']) ? (string)$row['item_name'] : '',
+                'label' => $label,
+                'default_cents' => rw_catalog_default_cents($row),
+                'tax_rule_ids' => ''
+            );
+        }
+        foreach ($map as $parentId => $children) {
+            $map[$parentId] = array_values($children);
+        }
+    } catch (Exception $e) {
+        $map = array();
+    }
+    return $map;
+}
+
+/* Datos de origen */
+$properties = pms_fetch_properties($companyId);
+$rooms      = pms_fetch_rooms_for_company($companyId);
+$roomsByProp = rw_rooms_by_property($rooms);
+
+// Categorías desde sp_portal_property_data (RS4)
+$categoryRows = array();
+try {
+    $propSets = pms_call_procedure('sp_portal_property_data', array($companyCode, '', 0, ''));
+    if (isset($propSets[3])) {
+        foreach ($propSets[3] as $row) {
+            $categoryRows[] = array(
+                'id_category'   => isset($row['id_category']) ? (int)$row['id_category'] : 0,
+                'code'          => isset($row['category_code']) ? (string)$row['category_code'] : '',
+                'name'          => isset($row['category_name']) ? (string)$row['category_name'] : '',
+                'property_code' => isset($row['property_code']) ? strtoupper((string)$row['property_code']) : ''
+            );
+        }
+    }
+} catch (Exception $e) {
+    $categoryRows = array();
+}
+$categoriesByProp = rw_categories_by_property($categoryRows);
+
+// Complementar categorias desde habitaciones para asegurar opciones por propiedad
+foreach ($rooms as $room) {
+    $p = isset($room['property_code']) ? strtoupper((string)$room['property_code']) : '';
+    $ccode = isset($room['category_code']) ? strtoupper((string)$room['category_code']) : '';
+    if ($p === '' || $ccode === '') {
+        continue;
+    }
+    if (!isset($categoriesByProp[$p])) {
+        $categoriesByProp[$p] = array();
+    }
+    $exists = false;
+    foreach ($categoriesByProp[$p] as $c) {
+        if (isset($c['code']) && strtoupper((string)$c['code']) === $ccode) {
+            $exists = true;
+            break;
+        }
+    }
+    if ($exists) {
+        continue;
+    }
+    $categoriesByProp[$p][] = array(
+        'id_category'   => isset($room['id_category']) ? (int)$room['id_category'] : 0,
+        'code'          => $ccode,
+        'name'          => isset($room['category_name']) ? (string)$room['category_name'] : $ccode,
+        'property_code' => $p
+    );
+}
+
+/* Origenes de reservacion */
+$otaAccountsByProperty = function_exists('pms_fetch_ota_accounts_grouped')
+    ? pms_fetch_ota_accounts_grouped($companyId, false)
+    : array();
+$reservationSourcesByProperty = function_exists('pms_fetch_reservation_sources_grouped')
+    ? pms_fetch_reservation_sources_grouped($companyId, false)
+    : array('*' => array());
+$wizardSourceOptionsByProperty = array();
+foreach ($properties as $propertyRow) {
+    $propertyCodeTmp = strtoupper((string)(isset($propertyRow['code']) ? $propertyRow['code'] : ''));
+    if ($propertyCodeTmp === '') {
+        continue;
+    }
+    $wizardSourceOptionsByProperty[$propertyCodeTmp] = rw_origin_options_for_property(
+        $reservationSourcesByProperty,
+        $otaAccountsByProperty,
+        $propertyCodeTmp
+    );
+}
+$phoneCountries = function_exists('pms_phone_country_rows') ? pms_phone_country_rows() : array();
+$defaultPhonePrefix = function_exists('pms_phone_prefix_default') ? pms_phone_prefix_default() : '+52';
+$phonePrefixDialMap = function_exists('pms_phone_prefix_dials_map')
+    ? pms_phone_prefix_dials_map()
+    : array($defaultPhonePrefix => true);
+
+$paymentCatalogsByProperty = array();
+try {
+    $parseIds = function ($csv) {
+        if (!is_string($csv) || $csv === '') {
+            return array();
+        }
+        $out = array();
+        foreach (explode(',', $csv) as $v) {
+            $id = (int)$v;
+            if ($id > 0) {
+                $out[$id] = true;
+            }
+        }
+        return $out;
+    };
+
+    $globalSet = array();
+    $globalSettings = pms_call_procedure('sp_pms_settings_data', array($companyCode, null));
+    $globalRow = isset($globalSettings[0][0]) ? $globalSettings[0][0] : array();
+    $globalSet = $parseIds(isset($globalRow['payment_catalog_ids']) ? (string)$globalRow['payment_catalog_ids'] : '');
+
+    $effectiveSetsByProperty = array();
+    foreach ($properties as $property) {
+        $pcode = strtoupper((string)($property['code'] ?? ''));
+        if ($pcode === '') {
+            continue;
+        }
+        $localSet = array();
+        $localSettings = pms_call_procedure('sp_pms_settings_data', array($companyCode, $pcode));
+        $localRow = isset($localSettings[0][0]) ? $localSettings[0][0] : array();
+        $localSet = $parseIds(isset($localRow['payment_catalog_ids']) ? (string)$localRow['payment_catalog_ids'] : '');
+        $effectiveSetsByProperty[$pcode] = $localSet ? $localSet : $globalSet;
+    }
+
+    $catSets = pms_call_procedure('sp_sale_item_catalog_data', array($companyCode, null, 0, 0, 0));
+    $allCatalogs = isset($catSets[0]) ? $catSets[0] : array();
+    $addedMap = array();
+    foreach ($allCatalogs as $src) {
+        if ((string)($src['catalog_type'] ?? '') !== 'payment') {
+            continue;
+        }
+        $pid = (int)($src['id_sale_item_catalog'] ?? 0);
+        if ($pid <= 0) {
+            continue;
+        }
+        $row = array(
+            'id_payment_catalog' => $pid,
+            'name' => isset($src['item_name']) ? (string)$src['item_name'] : '',
+            'property_code' => isset($src['property_code']) ? (string)$src['property_code'] : ''
+        );
+        $catalogProp = strtoupper((string)$row['property_code']);
+        if ($catalogProp === '') {
+            if (isset($globalSet[$pid])) {
+                if (!isset($paymentCatalogsByProperty['*'])) {
+                    $paymentCatalogsByProperty['*'] = array();
+                }
+                if (!isset($addedMap['*'][$pid])) {
+                    $paymentCatalogsByProperty['*'][] = $row;
+                    $addedMap['*'][$pid] = true;
+                }
+            }
+            foreach ($effectiveSetsByProperty as $pcode => $set) {
+                if (!isset($set[$pid])) {
+                    continue;
+                }
+                if (!isset($paymentCatalogsByProperty[$pcode])) {
+                    $paymentCatalogsByProperty[$pcode] = array();
+                }
+                if (!isset($addedMap[$pcode][$pid])) {
+                    $paymentCatalogsByProperty[$pcode][] = $row;
+                    $addedMap[$pcode][$pid] = true;
+                }
+            }
+        } else {
+            if (!isset($effectiveSetsByProperty[$catalogProp]) || !isset($effectiveSetsByProperty[$catalogProp][$pid])) {
+                continue;
+            }
+            if (!isset($paymentCatalogsByProperty[$catalogProp])) {
+                $paymentCatalogsByProperty[$catalogProp] = array();
+            }
+            if (!isset($addedMap[$catalogProp][$pid])) {
+                $paymentCatalogsByProperty[$catalogProp][] = $row;
+                $addedMap[$catalogProp][$pid] = true;
+            }
+        }
+    }
+} catch (Exception $e) {
+    $paymentCatalogsByProperty = array();
+}
+
+function rw_payment_catalogs_for_property(array $map, $propertyCode)
+{
+    $prop = strtoupper((string)$propertyCode);
+    $out = array();
+    if (isset($map['*'])) {
+        $out = array_merge($out, $map['*']);
+    }
+    if ($prop !== '' && isset($map[$prop])) {
+        $out = array_merge($out, $map[$prop]);
+    }
+    $dedup = array();
+    $unique = array();
+    foreach ($out as $row) {
+        $pid = isset($row['id_payment_catalog']) ? (int)$row['id_payment_catalog'] : 0;
+        if ($pid <= 0 || isset($dedup[$pid])) {
+            continue;
+        }
+        $dedup[$pid] = true;
+        $unique[] = $row;
+    }
+    return $unique;
+}
+
+function rw_payment_catalogs_for_reservation(array $map, $propertyCode, $companyId, $reservationId)
+{
+    $rows = rw_payment_catalogs_for_property($map, $propertyCode);
+    $reservationId = (int)$reservationId;
+    if ($reservationId <= 0) {
+        return $rows;
+    }
+    $blockedIds = function_exists('pms_reservation_blocked_payment_catalog_ids')
+        ? pms_reservation_blocked_payment_catalog_ids($companyId, $reservationId)
+        : array();
+    if (!$blockedIds) {
+        return $rows;
+    }
+    if (function_exists('pms_filter_payment_catalog_rows_by_blocked_ids')) {
+        return pms_filter_payment_catalog_rows_by_blocked_ids($rows, $blockedIds);
+    }
+    return $rows;
+}
+
+function rw_normalize_error_message($message)
+{
+    $msg = trim((string)$message);
+    if ($msg === '') {
+        return 'Error inesperado.';
+    }
+    $msg = preg_replace('/^SQLSTATE\\[[^\\]]+\\]:\\s*/i', '', $msg);
+    $msg = preg_replace('/^<<\\s*Unknown\\s+error\\s*>>\\s*:\\s*/i', '', $msg);
+    $msg = preg_replace('/^\\d+\\s*/', '', $msg);
+    $msg = trim((string)$msg);
+    return $msg !== '' ? $msg : 'Error inesperado.';
+}
+
+function rw_recalc_derived_tree_for_catalog($folioId, $reservationId, $catalogId, $serviceDate, $actorUserId)
+{
+    $folioId = (int)$folioId;
+    $reservationId = (int)$reservationId;
+    $catalogId = (int)$catalogId;
+    if ($folioId <= 0 || $reservationId <= 0 || $catalogId <= 0) {
+        return;
+    }
+    pms_call_procedure('sp_line_item_percent_derived_upsert', array(
+        $folioId,
+        $reservationId,
+        $catalogId,
+        $serviceDate,
+        $actorUserId
+    ));
+    try {
+        pms_call_procedure('sp_folio_recalc', array($folioId));
+    } catch (Exception $e) {
+    }
+}
+
+function wizard_apply_payments($reservationId, $actorUserId, $propertyCode = '')
+{
+    $result = array(
+        'attempted' => 0,
+        'created' => 0,
+        'created_amount_cents' => 0,
+        'errors' => array(),
+    );
+    if ($reservationId <= 0) {
+        return $result;
+    }
+
+    $includeSinglePayment = (int)rw_input('wizard_include_payment', 0) === 1;
+    $singlePaymentMode = strtolower(trim((string)rw_input('wizard_payment_mode', 'full')));
+    if ($singlePaymentMode !== 'fixed' && $singlePaymentMode !== 'full') {
+        $singlePaymentMode = 'full';
+    }
+    $singleMethodRaw = trim((string)rw_input('wizard_payment_method_single', ''));
+    $singleFixedAmountRaw = str_replace(',', '.', trim((string)rw_input('wizard_payment_fixed_amount', '')));
+    $singleReference = (string)rw_input('wizard_payment_reference_single', '');
+    $singleDate = trim((string)rw_input('wizard_payment_date_single', ''));
+    if ($singleDate === '') {
+        $singleDate = date('Y-m-d');
+    }
+
+    $methodsRaw = isset($_POST['wizard_payment_method']) ? $_POST['wizard_payment_method'] : null;
+    if ($methodsRaw === null && !$includeSinglePayment) {
+        return $result;
+    }
+    if ($methodsRaw === null) {
+        $methodsRaw = array();
+    } elseif (!is_array($methodsRaw)) {
+        $methodsRaw = array($methodsRaw);
+    }
+    if (!$methodsRaw && !$includeSinglePayment) {
+        return $result;
+    }
+
+    $folioId = 0;
+    $folioCurrency = null;
+    $pdo = null;
+    try {
+        $pdo = pms_get_connection();
+        $stmt = $pdo->prepare('SELECT id_folio, currency FROM folio WHERE id_reservation = ? AND deleted_at IS NULL ORDER BY created_at DESC, id_folio DESC LIMIT 1');
+        $stmt->execute(array($reservationId));
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $folioId = $row && isset($row['id_folio']) ? (int)$row['id_folio'] : 0;
+        $folioCurrency = $row && isset($row['currency']) ? (string)$row['currency'] : null;
+    } catch (Exception $e) {
+        $folioId = 0;
+    }
+    if ($folioId <= 0) {
+        try {
+            $pdo = isset($pdo) ? $pdo : pms_get_connection();
+            $stmt = $pdo->prepare('SELECT check_out_date, currency FROM reservation WHERE id_reservation = ? AND deleted_at IS NULL LIMIT 1');
+            $stmt->execute(array($reservationId));
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $dueDate = $row && isset($row['check_out_date']) ? $row['check_out_date'] : null;
+            $currency = $row && isset($row['currency']) ? $row['currency'] : null;
+            pms_call_procedure('sp_folio_upsert', array(
+                'create',
+                0,
+                $reservationId,
+                'Principal',
+                $dueDate,
+                null,
+                null,
+                null,
+                $currency,
+                $actorUserId
+            ));
+            $stmt = $pdo->prepare('SELECT id_folio, currency FROM folio WHERE id_reservation = ? AND deleted_at IS NULL ORDER BY created_at DESC, id_folio DESC LIMIT 1');
+            $stmt->execute(array($reservationId));
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $folioId = $row && isset($row['id_folio']) ? (int)$row['id_folio'] : 0;
+            $folioCurrency = $row && isset($row['currency']) ? (string)$row['currency'] : $folioCurrency;
+        } catch (Exception $e) {
+            $folioId = 0;
+        }
+    }
+    if ($folioId <= 0) {
+        $result['errors'][] = 'No se encontro folio para registrar pagos.';
+        return $result;
+    }
+
+    $methods = (array)$methodsRaw;
+    $amounts = isset($_POST['wizard_payment_amount']) ? (array)$_POST['wizard_payment_amount'] : array();
+    $refs = isset($_POST['wizard_payment_reference']) ? (array)$_POST['wizard_payment_reference'] : array();
+    $dates = isset($_POST['wizard_payment_date']) ? (array)$_POST['wizard_payment_date'] : array();
+    $forcedAmountCentsByIndex = array();
+
+    $fallbackCatalogs = rw_payment_catalogs_for_reservation(
+        $GLOBALS['paymentCatalogsByProperty'],
+        $propertyCode,
+        isset($GLOBALS['companyId']) ? (int)$GLOBALS['companyId'] : 0,
+        $reservationId
+    );
+    $fallbackCatalogId = 0;
+    if (!empty($fallbackCatalogs)) {
+        $fallbackCatalogId = isset($fallbackCatalogs[0]['id_payment_catalog']) ? (int)$fallbackCatalogs[0]['id_payment_catalog'] : 0;
+    }
+    $fixedChildrenByParentMap = rw_fetch_fixed_children_by_parent(
+        isset($GLOBALS['companyCode']) ? (string)$GLOBALS['companyCode'] : '',
+        $propertyCode,
+        isset($GLOBALS['companyId']) ? (int)$GLOBALS['companyId'] : 0
+    );
+
+    if ($includeSinglePayment) {
+        $methods = array($singleMethodRaw !== '' ? $singleMethodRaw : (string)$fallbackCatalogId);
+        $amounts = array('');
+        $refs = array($singleReference);
+        $dates = array($singleDate);
+
+        if ($singlePaymentMode === 'fixed') {
+            $singleAmountCents = $singleFixedAmountRaw !== '' ? (int)round(((float)$singleFixedAmountRaw) * 100) : 0;
+            if ($singleAmountCents <= 0) {
+                $result['attempted'] = 1;
+                $result['errors'][] = 'Captura una cantidad valida para el pago inicial.';
+                return $result;
+            }
+            $forcedAmountCentsByIndex[0] = $singleAmountCents;
+        } else {
+            try {
+                pms_call_procedure('sp_folio_recalc', array($folioId));
+            } catch (Exception $ignoreRecalc) {
+            }
+            $balanceCents = 0;
+            try {
+                $pdo = $pdo ?: pms_get_connection();
+                $stmt = $pdo->prepare('SELECT balance_cents FROM folio WHERE id_folio = ? AND deleted_at IS NULL LIMIT 1');
+                $stmt->execute(array($folioId));
+                $balanceCents = (int)$stmt->fetchColumn();
+            } catch (Exception $e) {
+                $balanceCents = 0;
+            }
+            if ($balanceCents <= 0) {
+                $result['attempted'] = 1;
+                $result['errors'][] = 'No hay saldo pendiente para aplicar un pago completo.';
+                return $result;
+            }
+            $forcedAmountCentsByIndex[0] = $balanceCents;
+        }
+    }
+
+    $paymentsCreated = 0;
+    foreach ($methods as $idx => $methodIdRaw) {
+        $methodId = (int)$methodIdRaw;
+        $methodRawText = trim((string)$methodIdRaw);
+        if (isset($forcedAmountCentsByIndex[$idx])) {
+            $amountCents = (int)$forcedAmountCentsByIndex[$idx];
+        } else {
+            $amountRaw = isset($amounts[$idx]) ? (string)$amounts[$idx] : '';
+            $amountRaw = str_replace(',', '.', trim($amountRaw));
+            $amountCents = $amountRaw !== '' ? (int)round(((float)$amountRaw) * 100) : 0;
+        }
+        if ($methodId <= 0 && $fallbackCatalogId > 0) {
+            $methodId = $fallbackCatalogId;
+        }
+        if ($amountCents <= 0) {
+            continue;
+        }
+        $result['attempted']++;
+        $serviceDate = isset($dates[$idx]) && trim((string)$dates[$idx]) !== ''
+            ? (string)$dates[$idx]
+            : date('Y-m-d');
+        $reference = isset($refs[$idx]) ? (string)$refs[$idx] : '';
+        $created = false;
+        try {
+            $catalog = null;
+            $allMethods = rw_payment_catalogs_for_reservation(
+                $GLOBALS['paymentCatalogsByProperty'],
+                $propertyCode,
+                isset($GLOBALS['companyId']) ? (int)$GLOBALS['companyId'] : 0,
+                $reservationId
+            );
+            if ($methodId > 0) {
+                foreach ($allMethods as $m) {
+                    if ((int)($m['id_payment_catalog'] ?? 0) === $methodId) {
+                        $catalog = $m;
+                        break;
+                    }
+                }
+            }
+            if (!$catalog && $methodRawText !== '') {
+                foreach ($allMethods as $m) {
+                    if (strcasecmp((string)($m['name'] ?? ''), $methodRawText) === 0) {
+                        $catalog = $m;
+                        break;
+                    }
+                }
+            }
+            if (!$catalog && $fallbackCatalogId > 0) {
+                foreach ($allMethods as $m) {
+                    if ((int)($m['id_payment_catalog'] ?? 0) === $fallbackCatalogId) {
+                        $catalog = $m;
+                        break;
+                    }
+                }
+            }
+            if (!$catalog) {
+                $result['errors'][] = 'No se encontro metodo de pago valido para el pago #' . ($idx + 1) . '.';
+                continue;
+            }
+
+            $methodCatalogId = isset($catalog['id_payment_catalog']) ? (int)$catalog['id_payment_catalog'] : 0;
+            $methodName = isset($catalog['name']) ? (string)$catalog['name'] : 'Pago inicial';
+            if ($methodName === '') {
+                $methodName = 'Pago inicial';
+            }
+            if ($methodCatalogId <= 0) {
+                $result['errors'][] = 'No se encontro metodo de pago valido para el pago #' . ($idx + 1) . '.';
+                continue;
+            }
+            $paymentSets = pms_call_procedure('sp_sale_item_upsert', array(
+                'create',
+                0,
+                $folioId,
+                $reservationId,
+                $methodCatalogId,
+                null,
+                $serviceDate,
+                1,
+                $amountCents,
+                0,
+                'captured',
+                $actorUserId
+            ));
+            $paymentRow = isset($paymentSets[0][0]) ? $paymentSets[0][0] : array();
+            $paymentId = isset($paymentRow['id_sale_item']) ? (int)$paymentRow['id_sale_item'] : 0;
+            if ($paymentId > 0) {
+                pms_call_procedure('sp_line_item_payment_meta_upsert', array(
+                    $paymentId,
+                    $methodName,
+                    $reference,
+                    'captured',
+                    $actorUserId
+                ));
+            }
+            if (!empty($fixedChildrenByParentMap)) {
+                $fixedPath = array();
+                rw_upsert_fixed_children_tree(
+                    $reservationId,
+                    $folioId,
+                    $serviceDate,
+                    $actorUserId,
+                    $methodCatalogId,
+                    $fixedChildrenByParentMap,
+                    array(),
+                    array(),
+                    $fixedPath,
+                    0
+                );
+            }
+            rw_recalc_derived_tree_for_catalog(
+                $folioId,
+                $reservationId,
+                $methodCatalogId,
+                $serviceDate,
+                $actorUserId
+            );
+            $created = true;
+        } catch (Exception $inner) {
+            $result['errors'][] = 'Pago no aplicado: ' . rw_normalize_error_message($inner->getMessage());
+            $created = false;
+        }
+        if ($created) {
+            $paymentsCreated++;
+            $result['created_amount_cents'] += (int)$amountCents;
+        }
+    }
+    $result['created'] = $paymentsCreated;
+    if ($paymentsCreated > 0) {
+        try {
+            pms_call_procedure('sp_folio_recalc', array($folioId));
+        } catch (Exception $e) {
+        }
+    }
+    return $result;
+}
+
+function rw_get_latest_folio_id($reservationId)
+{
+    $reservationId = (int)$reservationId;
+    if ($reservationId <= 0) {
+        return 0;
+    }
+    try {
+        $pdo = pms_get_connection();
+        $stmt = $pdo->prepare('SELECT id_folio FROM folio WHERE id_reservation = ? AND deleted_at IS NULL ORDER BY created_at DESC, id_folio DESC LIMIT 1');
+        $stmt->execute(array($reservationId));
+        return (int)$stmt->fetchColumn();
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+function rw_find_or_create_lodging_folio_id($reservationId, $actorUserId = null)
+{
+    $reservationId = (int)$reservationId;
+    $actorUserId = $actorUserId !== null ? (int)$actorUserId : null;
+    if ($reservationId <= 0) {
+        return 0;
+    }
+    try {
+        $pdo = pms_get_connection();
+        $stmt = $pdo->prepare(
+            'SELECT
+                f.id_folio,
+                COALESCE(f.folio_name, \'\') AS folio_name,
+                COALESCE(NULLIF(TRIM(f.currency), \'\'), \'MXN\') AS currency,
+                r.check_out_date
+             FROM folio f
+             JOIN reservation r
+               ON r.id_reservation = f.id_reservation
+              AND r.deleted_at IS NULL
+             WHERE f.id_reservation = ?
+               AND f.deleted_at IS NULL
+               AND COALESCE(f.is_active, 1) = 1
+               AND LOWER(TRIM(COALESCE(f.status, \'open\'))) <> \'closed\'
+             ORDER BY f.id_folio ASC'
+        );
+        $stmt->execute(array($reservationId));
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $currency = 'MXN';
+        $dueDate = null;
+        $explicitLodgingId = 0;
+        $ambiguousLodgingId = 0;
+        foreach ($rows as $row) {
+            if (isset($row['currency']) && trim((string)$row['currency']) !== '') {
+                $currency = (string)$row['currency'];
+            }
+            if (isset($row['check_out_date']) && trim((string)$row['check_out_date']) !== '') {
+                $dueDate = (string)$row['check_out_date'];
+            }
+            $folioId = isset($row['id_folio']) ? (int)$row['id_folio'] : 0;
+            if ($folioId <= 0) {
+                continue;
+            }
+            $folioName = strtolower(trim((string)(isset($row['folio_name']) ? $row['folio_name'] : '')));
+            $hasServiceWord = ($folioName !== '' && (strpos($folioName, 'servicio') !== false || strpos($folioName, 'service') !== false));
+            $hasLodgingHint = ($folioName !== '' && (strpos($folioName, 'hosped') !== false || in_array($folioName, array('principal', 'main', 'hospedaje'), true)));
+            if ($hasLodgingHint && !$hasServiceWord) {
+                $explicitLodgingId = $folioId;
+                break;
+            }
+            if ($ambiguousLodgingId <= 0 && ($folioName === '' || in_array($folioName, array('principal', 'main'), true))) {
+                $ambiguousLodgingId = $folioId;
+            }
+        }
+
+        $lodgingFolioId = $explicitLodgingId > 0 ? $explicitLodgingId : $ambiguousLodgingId;
+        if ($lodgingFolioId > 0) {
+            $stmtNormalize = $pdo->prepare(
+                'UPDATE folio
+                 SET folio_name = ?
+                 WHERE id_folio = ?
+                   AND (
+                     folio_name IS NULL
+                     OR TRIM(folio_name) = \'\'
+                     OR LOWER(TRIM(folio_name)) IN (\'principal\', \'main\')
+                   )'
+            );
+            $stmtNormalize->execute(array('Hospedaje', $lodgingFolioId));
+            return $lodgingFolioId;
+        }
+
+        $stmtCreate = $pdo->prepare(
+            'INSERT INTO folio (
+                id_reservation, folio_name, status, currency, total_cents, balance_cents, due_date,
+                is_active, created_at, created_by, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), ?, NOW())'
+        );
+        $stmtCreate->execute(array(
+            $reservationId,
+            'Hospedaje',
+            'open',
+            $currency,
+            0,
+            0,
+            $dueDate,
+            $actorUserId
+        ));
+        return (int)$pdo->lastInsertId();
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+function rw_upsert_fixed_children_tree(
+    $reservationId,
+    $folioId,
+    $serviceDate,
+    $actorUserId,
+    $parentCatalogId,
+    array $fixedChildrenByParentMap,
+    array $childOverridesByPair,
+    array $childOverridesByCatalog,
+    array &$path = array(),
+    $depth = 0
+)
+{
+    $reservationId = (int)$reservationId;
+    $folioId = (int)$folioId;
+    $parentCatalogId = (int)$parentCatalogId;
+    $depth = (int)$depth;
+    if ($reservationId <= 0 || $folioId <= 0 || $parentCatalogId <= 0 || $depth > 20) {
+        return;
+    }
+    if (isset($path[$parentCatalogId])) {
+        return;
+    }
+    $path[$parentCatalogId] = true;
+
+    static $catalogNameCache = array();
+    static $catalogDefaultCentsCache = array();
+    $resolveCatalogName = function ($catalogId, $fallback = '') use (&$catalogNameCache) {
+        $catalogId = (int)$catalogId;
+        if ($catalogId <= 0) {
+            return (string)$fallback;
+        }
+        if (isset($catalogNameCache[$catalogId])) {
+            return $catalogNameCache[$catalogId];
+        }
+        $name = '';
+        try {
+            $pdo = pms_get_connection();
+            $stmt = $pdo->prepare('SELECT item_name FROM line_item_catalog WHERE id_line_item_catalog = ? LIMIT 1');
+            $stmt->execute(array($catalogId));
+            $name = (string)$stmt->fetchColumn();
+        } catch (Exception $e) {
+            $name = '';
+        }
+        $name = trim($name) !== '' ? trim($name) : (string)$fallback;
+        $catalogNameCache[$catalogId] = $name;
+        return $name;
+    };
+    $resolveCatalogDefaultCents = function ($catalogId) use (&$catalogDefaultCentsCache) {
+        $catalogId = (int)$catalogId;
+        if ($catalogId <= 0) {
+            return 0;
+        }
+        if (isset($catalogDefaultCentsCache[$catalogId])) {
+            return (int)$catalogDefaultCentsCache[$catalogId];
+        }
+        $defaultCents = 0;
+        try {
+            $pdo = pms_get_connection();
+            $stmt = $pdo->prepare(
+                'SELECT COALESCE(default_unit_price_cents, 0) AS default_unit_price_cents,
+                        COALESCE(default_amount_cents, 0) AS default_amount_cents
+                   FROM line_item_catalog
+                  WHERE id_line_item_catalog = ?
+                  LIMIT 1'
+            );
+            $stmt->execute(array($catalogId));
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($row && is_array($row)) {
+                $defaultCents = rw_catalog_default_cents($row);
+            }
+        } catch (Exception $e) {
+            $defaultCents = 0;
+        }
+        $catalogDefaultCentsCache[$catalogId] = (int)$defaultCents;
+        return (int)$defaultCents;
+    };
+
+    $children = isset($fixedChildrenByParentMap[$parentCatalogId]) && is_array($fixedChildrenByParentMap[$parentCatalogId])
+        ? $fixedChildrenByParentMap[$parentCatalogId]
+        : array();
+    foreach ($children as $childMeta) {
+        if (!is_array($childMeta)) {
+            continue;
+        }
+        $childId = isset($childMeta['id']) ? (int)$childMeta['id'] : 0;
+        if ($childId <= 0) {
+            continue;
+        }
+        $pairKey = $parentCatalogId . ':' . $childId;
+        $childAmountCents = isset($childMeta['default_cents']) ? (int)$childMeta['default_cents'] : 0;
+        if (isset($childOverridesByPair[$pairKey])) {
+            $overrideTotal = isset($childOverridesByPair[$pairKey]['total_cents']) ? (int)$childOverridesByPair[$pairKey]['total_cents'] : 0;
+            if ($overrideTotal > 0) {
+                $childAmountCents = $overrideTotal;
+            }
+        } elseif (isset($childOverridesByCatalog[$childId])) {
+            $overrideTotal = isset($childOverridesByCatalog[$childId]['total_cents']) ? (int)$childOverridesByCatalog[$childId]['total_cents'] : 0;
+            if ($overrideTotal > 0) {
+                $childAmountCents = $overrideTotal;
+            }
+        }
+        if ($childAmountCents <= 0) {
+            $childAmountCents = $resolveCatalogDefaultCents($childId);
+        }
+        if ($childAmountCents > 0) {
+            $parentName = $resolveCatalogName($parentCatalogId, '');
+            $childName = isset($childMeta['name']) ? trim((string)$childMeta['name']) : '';
+            if ($childName === '') {
+                $childName = $resolveCatalogName($childId, '');
+            }
+            $derivedDesc = trim($childName) !== '' && trim($parentName) !== ''
+                ? ($childName . ' / ' . $parentName)
+                : null;
+
+            $existingId = 0;
+            try {
+                $pdo = pms_get_connection();
+                if ($derivedDesc !== null) {
+                    $stmtExisting = $pdo->prepare(
+                        'SELECT id_line_item
+                           FROM line_item
+                          WHERE id_folio = ?
+                            AND id_line_item_catalog = ?
+                            AND (service_date <=> ?)
+                            AND deleted_at IS NULL
+                            AND is_active = 1
+                            AND COALESCE(description, \'\') = COALESCE(?, \'\')
+                          ORDER BY id_line_item DESC
+                          LIMIT 1'
+                    );
+                    $stmtExisting->execute(array($folioId, $childId, $serviceDate, $derivedDesc));
+                } else {
+                    $stmtExisting = $pdo->prepare(
+                        'SELECT id_line_item
+                           FROM line_item
+                          WHERE id_folio = ?
+                            AND id_line_item_catalog = ?
+                            AND (service_date <=> ?)
+                            AND deleted_at IS NULL
+                            AND is_active = 1
+                          ORDER BY id_line_item DESC
+                          LIMIT 1'
+                    );
+                    $stmtExisting->execute(array($folioId, $childId, $serviceDate));
+                }
+                $existingId = (int)$stmtExisting->fetchColumn();
+            } catch (Exception $e) {
+                $existingId = 0;
+            }
+
+            pms_call_procedure('sp_sale_item_upsert', array(
+                $existingId > 0 ? 'update' : 'create',
+                $existingId,
+                $folioId,
+                $reservationId,
+                $childId,
+                $derivedDesc,
+                $serviceDate,
+                1,
+                $childAmountCents,
+                null,
+                'posted',
+                $actorUserId
+            ));
+        }
+        rw_upsert_fixed_children_tree(
+            $reservationId,
+            $folioId,
+            $serviceDate,
+            $actorUserId,
+            $childId,
+            $fixedChildrenByParentMap,
+            $childOverridesByPair,
+            $childOverridesByCatalog,
+            $path,
+            $depth + 1
+        );
+        try {
+            pms_call_procedure('sp_line_item_percent_derived_upsert', array(
+                $folioId,
+                $reservationId,
+                $childId,
+                $serviceDate,
+                $actorUserId
+            ));
+        } catch (Exception $ignoreChildRecalc) {
+        }
+    }
+    unset($path[$parentCatalogId]);
+}
+
+function rw_attach_lodging_concepts_to_folio(
+    $reservationId,
+    $folioId,
+    array $conceptSpecs,
+    array $lodgingOptionsMap,
+    $checkInDate,
+    $nights,
+    $actorUserId,
+    array $fixedChildrenByParentMap = array()
+)
+{
+    $reservationId = (int)$reservationId;
+    $folioId = (int)$folioId;
+    $nights = (int)$nights;
+    if ($reservationId <= 0 || $folioId <= 0 || !$conceptSpecs) {
+        return;
+    }
+    $serviceDate = trim((string)$checkInDate) !== '' ? (string)$checkInDate : date('Y-m-d');
+    $nightQty = $nights > 0 ? $nights : 1;
+    foreach ($conceptSpecs as $spec) {
+        if (!is_array($spec)) {
+            continue;
+        }
+        $conceptId = isset($spec['concept_id']) ? (int)$spec['concept_id'] : 0;
+        if ($conceptId <= 0) {
+            continue;
+        }
+        $opt = isset($lodgingOptionsMap[$conceptId]) ? $lodgingOptionsMap[$conceptId] : null;
+        if (!$opt) {
+            continue;
+        }
+        $totalCents = isset($spec['total_cents']) ? (int)$spec['total_cents'] : 0;
+        $lineQty = 1;
+        $unitCents = isset($opt['default_unit_price_cents']) ? (int)$opt['default_unit_price_cents'] : null;
+        if ($totalCents > 0) {
+            $lineQty = $nightQty;
+            $unitCents = (int)round($totalCents / max(1, $lineQty));
+        }
+        pms_call_procedure('sp_sale_item_upsert', array(
+            'create',
+            0,
+            $folioId,
+            $reservationId,
+            $conceptId,
+            null,
+            $serviceDate,
+            $lineQty,
+            $unitCents,
+            null,
+            'posted',
+            $actorUserId
+        ));
+
+        $childTotalOverrideCents = isset($spec['child_total_cents']) ? (int)$spec['child_total_cents'] : 0;
+        $childOverridesByPair = array();
+        $childOverridesByCatalog = array();
+        if (isset($spec['children']) && is_array($spec['children'])) {
+            foreach ($spec['children'] as $childOverride) {
+                if (!is_array($childOverride)) continue;
+                $overrideCatalogId = isset($childOverride['catalog_id']) ? (int)$childOverride['catalog_id'] : 0;
+                if ($overrideCatalogId <= 0) continue;
+                $overrideParentCatalogId = isset($childOverride['parent_catalog_id']) ? (int)$childOverride['parent_catalog_id'] : 0;
+                if ($overrideParentCatalogId > 0) {
+                    $childOverridesByPair[$overrideParentCatalogId . ':' . $overrideCatalogId] = array(
+                        'total_cents' => isset($childOverride['total_cents']) ? (int)$childOverride['total_cents'] : 0
+                    );
+                }
+                $childOverridesByCatalog[$overrideCatalogId] = array(
+                    'total_cents' => isset($childOverride['total_cents']) ? (int)$childOverride['total_cents'] : 0
+                );
+            }
+        }
+        if ($childTotalOverrideCents > 0 && !empty($opt['child_id'])) {
+            $childOverridesByCatalog[(int)$opt['child_id']] = array('total_cents' => $childTotalOverrideCents);
+        }
+
+        $treeMap = $fixedChildrenByParentMap;
+        if (!$treeMap) {
+            $treeMap = array();
+        }
+        if (empty($treeMap[$conceptId])) {
+            $fixedChildren = isset($opt['fixed_children']) && is_array($opt['fixed_children']) ? $opt['fixed_children'] : array();
+            if (!$fixedChildren && isset($opt['child_id']) && (int)$opt['child_id'] > 0) {
+                $fixedChildren = array(array(
+                    'id' => (int)$opt['child_id'],
+                    'default_cents' => isset($opt['child_default_cents']) ? (int)$opt['child_default_cents'] : 0,
+                    'parent_catalog_id' => $conceptId
+                ));
+            }
+            if ($fixedChildren) {
+                $treeMap[$conceptId] = $fixedChildren;
+            }
+        }
+        $visitPath = array();
+        rw_upsert_fixed_children_tree(
+            $reservationId,
+            $folioId,
+            $serviceDate,
+            $actorUserId,
+            $conceptId,
+            $treeMap,
+            $childOverridesByPair,
+            $childOverridesByCatalog,
+            $visitPath,
+            0
+        );
+
+        pms_call_procedure('sp_line_item_percent_derived_upsert', array(
+            $folioId,
+            $reservationId,
+            $conceptId,
+            $serviceDate,
+            $actorUserId
+        ));
+    }
+
+    try {
+        pms_call_procedure('sp_folio_recalc', array($folioId));
+    } catch (Exception $e) {
+    }
+}
+
+function rw_apply_main_child_totals(
+    $reservationId,
+    $folioId,
+    $parentCatalogId,
+    array $childSpecs,
+    $serviceDate,
+    $actorUserId,
+    array $fixedChildrenByParentMap = array()
+)
+{
+    $reservationId = (int)$reservationId;
+    $folioId = (int)$folioId;
+    $parentCatalogId = (int)$parentCatalogId;
+    if ($reservationId <= 0 || $folioId <= 0 || $parentCatalogId <= 0 || !$childSpecs) {
+        return;
+    }
+    $serviceDate = trim((string)$serviceDate) !== '' ? (string)$serviceDate : date('Y-m-d');
+    try {
+        $pdo = pms_get_connection();
+        $stmt = $pdo->prepare('SELECT id_line_item FROM line_item WHERE id_folio = ? AND id_line_item_catalog = ? AND deleted_at IS NULL ORDER BY id_line_item DESC LIMIT 1');
+        $stmt->execute(array($folioId, $parentCatalogId));
+        $parentSaleItemId = (int)$stmt->fetchColumn();
+    } catch (Exception $e) {
+        $parentSaleItemId = 0;
+    }
+    if ($parentSaleItemId <= 0) {
+        return;
+    }
+
+    $allOverridesByPair = array();
+    // Evitar doble conteo: no usar override global por catalogo en este flujo.
+    // Solo se respeta el override por par padre:hijo.
+    $allOverridesByCatalog = array();
+    $directChildrenByPair = array();
+    foreach ($childSpecs as $childSpecRaw) {
+        if (!is_array($childSpecRaw)) continue;
+        $tmpChildCatalogId = isset($childSpecRaw['catalog_id']) ? (int)$childSpecRaw['catalog_id'] : 0;
+        if ($tmpChildCatalogId <= 0) continue;
+        $tmpParentCatalogId = isset($childSpecRaw['parent_catalog_id']) ? (int)$childSpecRaw['parent_catalog_id'] : 0;
+        if ($tmpParentCatalogId <= 0) {
+            $tmpParentCatalogId = $parentCatalogId;
+        }
+        $tmpTotalCents = isset($childSpecRaw['total_cents']) ? (int)$childSpecRaw['total_cents'] : 0;
+        $pairKeyTmp = $tmpParentCatalogId . ':' . $tmpChildCatalogId;
+        $allOverridesByPair[$pairKeyTmp] = array('total_cents' => $tmpTotalCents);
+        $directChildrenByPair[$pairKeyTmp] = array(
+            'catalog_id' => $tmpChildCatalogId,
+            'parent_catalog_id' => $tmpParentCatalogId,
+            'total_cents' => $tmpTotalCents
+        );
+    }
+
+    static $rwCatalogNameCache = array();
+    $resolveCatalogName = function ($catalogId, $fallback = '') use (&$rwCatalogNameCache) {
+        $catalogId = (int)$catalogId;
+        if ($catalogId <= 0) {
+            return (string)$fallback;
+        }
+        if (isset($rwCatalogNameCache[$catalogId])) {
+            return $rwCatalogNameCache[$catalogId];
+        }
+        $name = '';
+        try {
+            $pdoInner = pms_get_connection();
+            $stmtInner = $pdoInner->prepare('SELECT item_name FROM line_item_catalog WHERE id_line_item_catalog = ? LIMIT 1');
+            $stmtInner->execute(array($catalogId));
+            $name = (string)$stmtInner->fetchColumn();
+        } catch (Exception $e) {
+            $name = '';
+        }
+        $name = trim($name) !== '' ? trim($name) : (string)$fallback;
+        $rwCatalogNameCache[$catalogId] = $name;
+        return $name;
+    };
+
+    foreach ($directChildrenByPair as $childSpec) {
+        if (!is_array($childSpec)) continue;
+        $childCatalogId = isset($childSpec['catalog_id']) ? (int)$childSpec['catalog_id'] : 0;
+        $childParentCatalogId = isset($childSpec['parent_catalog_id']) ? (int)$childSpec['parent_catalog_id'] : 0;
+        if ($childParentCatalogId <= 0) {
+            $childParentCatalogId = $parentCatalogId;
+        }
+        // Los nietos/bisnietos se crean desde recursión; aquí solo se atienden hijos directos del padre principal.
+        if ($childParentCatalogId !== $parentCatalogId) {
+            continue;
+        }
+        if ($childCatalogId <= 0) {
+            continue;
+        }
+        $childTotalCents = isset($childSpec['total_cents']) ? (int)$childSpec['total_cents'] : 0;
+        if ($childTotalCents <= 0) {
+            // Aun sin total directo, disparar recursión para respetar posibles overrides en descendientes.
+            $visitPath = array();
+            rw_upsert_fixed_children_tree(
+                $reservationId,
+                $folioId,
+                $serviceDate,
+                $actorUserId,
+                $childCatalogId,
+                $fixedChildrenByParentMap,
+                $allOverridesByPair,
+                $allOverridesByCatalog,
+                $visitPath,
+                0
+            );
+            pms_call_procedure('sp_line_item_percent_derived_upsert', array(
+                $folioId,
+                $reservationId,
+                $childCatalogId,
+                $serviceDate,
+                $actorUserId
+            ));
+            continue;
+        }
+        $parentName = $resolveCatalogName($childParentCatalogId, '');
+        $childName = $resolveCatalogName($childCatalogId, '');
+        $derivedDesc = trim($childName) !== '' && trim($parentName) !== ''
+            ? ($childName . ' / ' . $parentName)
+            : null;
+
+        $childSaleItemId = 0;
+        try {
+            if ($derivedDesc !== null) {
+                $stmt = $pdo->prepare(
+                    'SELECT id_line_item
+                       FROM line_item
+                      WHERE id_folio = ?
+                        AND id_line_item_catalog = ?
+                        AND (service_date <=> ?)
+                        AND deleted_at IS NULL
+                        AND COALESCE(description, \'\') = COALESCE(?, \'\')
+                      ORDER BY id_line_item DESC
+                      LIMIT 1'
+                );
+                $stmt->execute(array($folioId, $childCatalogId, $serviceDate, $derivedDesc));
+            } else {
+                $stmt = $pdo->prepare(
+                    'SELECT id_line_item
+                       FROM line_item
+                      WHERE id_folio = ?
+                        AND id_line_item_catalog = ?
+                        AND (service_date <=> ?)
+                        AND deleted_at IS NULL
+                      ORDER BY id_line_item DESC
+                      LIMIT 1'
+                );
+                $stmt->execute(array($folioId, $childCatalogId, $serviceDate));
+            }
+            $childSaleItemId = (int)$stmt->fetchColumn();
+        } catch (Exception $e) {
+            $childSaleItemId = 0;
+        }
+        pms_call_procedure('sp_sale_item_upsert', array(
+            $childSaleItemId > 0 ? 'update' : 'create',
+            $childSaleItemId,
+            $folioId,
+            $reservationId,
+            $childCatalogId,
+            $derivedDesc,
+            $serviceDate,
+            1,
+            $childTotalCents,
+            null,
+            'posted',
+            $actorUserId
+        ));
+
+        $visitPath = array();
+        rw_upsert_fixed_children_tree(
+            $reservationId,
+            $folioId,
+            $serviceDate,
+            $actorUserId,
+            $childCatalogId,
+            $fixedChildrenByParentMap,
+            $allOverridesByPair,
+            $allOverridesByCatalog,
+            $visitPath,
+            0
+        );
+
+        pms_call_procedure('sp_line_item_percent_derived_upsert', array(
+            $folioId,
+            $reservationId,
+            $childCatalogId,
+            $serviceDate,
+            $actorUserId
+        ));
+    }
+
+    pms_call_procedure('sp_line_item_percent_derived_upsert', array(
+        $folioId,
+        $reservationId,
+        $parentCatalogId,
+        $serviceDate,
+        $actorUserId
+    ));
+}
+
+function rw_fetch_line_item_snapshot($lineItemId)
+{
+    $lineItemId = (int)$lineItemId;
+    if ($lineItemId <= 0) {
+        return null;
+    }
+    try {
+        $pdo = pms_get_connection();
+        $stmt = $pdo->prepare(
+            'SELECT li.id_line_item,
+                    li.id_folio,
+                    li.id_line_item_catalog,
+                    li.item_type,
+                    li.service_date,
+                    li.description,
+                    f.id_reservation
+               FROM line_item li
+               JOIN folio f
+                 ON f.id_folio = li.id_folio
+                AND f.deleted_at IS NULL
+              WHERE li.id_line_item = ?
+                AND li.deleted_at IS NULL
+              LIMIT 1'
+        );
+        $stmt->execute(array($lineItemId));
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row && is_array($row) ? $row : null;
+    } catch (Exception $e) {
+        return null;
+    }
+}
+
+function rw_collect_line_item_descendants($rootLineItemId)
+{
+    $rootLineItemId = (int)$rootLineItemId;
+    if ($rootLineItemId <= 0) {
+        return array();
+    }
+
+    $descendants = array();
+    try {
+        $pdo = pms_get_connection();
+        $pending = array($rootLineItemId);
+        $seen = array($rootLineItemId => true);
+        $loopGuard = 0;
+        while ($pending && $loopGuard < 200) {
+            $loopGuard++;
+            $batch = array_splice($pending, 0, 50);
+            $batch = array_values(array_filter(array_map('intval', $batch), function ($v) {
+                return $v > 0;
+            }));
+            if (!$batch) {
+                continue;
+            }
+            $placeholders = implode(',', array_fill(0, count($batch), '?'));
+            $stmt = $pdo->prepare(
+                'SELECT DISTINCT c.id_line_item AS child_id
+                   FROM line_item p
+                   JOIN line_item c
+                     ON c.id_folio = p.id_folio
+                    AND c.id_line_item <> p.id_line_item
+                    AND c.deleted_at IS NULL
+                    AND c.is_active = 1
+                    AND (c.service_date <=> p.service_date)
+                   JOIN line_item_catalog_parent lcp
+                     ON lcp.id_parent_sale_item_catalog = p.id_line_item_catalog
+                    AND lcp.id_sale_item_catalog = c.id_line_item_catalog
+                    AND lcp.deleted_at IS NULL
+                    AND lcp.is_active = 1
+                   LEFT JOIN line_item_catalog child_cat
+                     ON child_cat.id_line_item_catalog = c.id_line_item_catalog
+                   LEFT JOIN line_item_catalog parent_cat
+                     ON parent_cat.id_line_item_catalog = p.id_line_item_catalog
+                  WHERE p.id_line_item IN (' . $placeholders . ')
+                    AND p.deleted_at IS NULL
+                    AND p.is_active = 1
+                    AND (
+                      COALESCE(c.description, \'\') = CONCAT(COALESCE(child_cat.item_name, \'\'), \' / \', COALESCE(parent_cat.item_name, \'\'))
+                      OR COALESCE(c.description, \'\') = CONCAT(\'[AUTO-DERIVED parent_line_item=\', p.id_line_item, \']\')
+                    )'
+            );
+            $stmt->execute($batch);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rows as $row) {
+                $childId = isset($row['child_id']) ? (int)$row['child_id'] : 0;
+                if ($childId <= 0 || isset($seen[$childId])) {
+                    continue;
+                }
+                $seen[$childId] = true;
+                $descendants[$childId] = $childId;
+                $pending[] = $childId;
+            }
+        }
+    } catch (Exception $e) {
+        return array_values($descendants);
+    }
+
+    return array_values($descendants);
+}
+
+function rw_find_primary_lodging_line_item($companyId, $reservationId)
+{
+    $companyId = (int)$companyId;
+    $reservationId = (int)$reservationId;
+    if ($companyId <= 0 || $reservationId <= 0) {
+        return array();
+    }
+    try {
+        $pdo = pms_get_connection();
+        $stmt = $pdo->prepare(
+            'SELECT li.id_line_item,
+                    li.id_folio,
+                    li.id_line_item_catalog,
+                    li.service_date,
+                    COALESCE(li.quantity, 0) AS quantity,
+                    COALESCE(li.unit_price_cents, 0) AS unit_price_cents,
+                    COALESCE(li.amount_cents, 0) AS amount_cents
+               FROM line_item li
+               JOIN folio f
+                 ON f.id_folio = li.id_folio
+                AND f.deleted_at IS NULL
+               JOIN reservation r
+                 ON r.id_reservation = f.id_reservation
+                AND r.deleted_at IS NULL
+               JOIN property p
+                 ON p.id_property = r.id_property
+                AND p.deleted_at IS NULL
+               JOIN pms_settings_lodging_catalog pslc
+                 ON pslc.id_company = p.id_company
+                AND (pslc.id_property IS NULL OR pslc.id_property = p.id_property)
+                AND pslc.id_sale_item_catalog = li.id_line_item_catalog
+                AND pslc.deleted_at IS NULL
+                AND pslc.is_active = 1
+              WHERE p.id_company = ?
+                AND f.id_reservation = ?
+                AND li.item_type = \'sale_item\'
+                AND li.deleted_at IS NULL
+                AND COALESCE(li.is_active, 1) = 1
+                AND (li.status IS NULL OR li.status NOT IN (\'void\', \'canceled\', \'cancelled\'))
+              ORDER BY li.service_date ASC, li.created_at ASC, li.id_line_item ASC
+              LIMIT 1'
+        );
+        $stmt->execute(array($companyId, $reservationId));
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row && is_array($row) ? $row : array();
+    } catch (Exception $e) {
+        return array();
+    }
+}
+
+function rw_find_lodging_line_items($companyId, $reservationId, $folioId = 0)
+{
+    $companyId = (int)$companyId;
+    $reservationId = (int)$reservationId;
+    $folioId = (int)$folioId;
+    if ($companyId <= 0 || $reservationId <= 0) {
+        return array();
+    }
+    try {
+        $pdo = pms_get_connection();
+        $sql =
+            'SELECT li.id_line_item,
+                    li.id_folio,
+                    li.id_line_item_catalog,
+                    li.service_date,
+                    COALESCE(li.quantity, 0) AS quantity,
+                    COALESCE(li.unit_price_cents, 0) AS unit_price_cents,
+                    COALESCE(li.amount_cents, 0) AS amount_cents
+               FROM line_item li
+               JOIN folio f
+                 ON f.id_folio = li.id_folio
+                AND f.deleted_at IS NULL
+               JOIN reservation r
+                 ON r.id_reservation = f.id_reservation
+                AND r.deleted_at IS NULL
+               JOIN property p
+                 ON p.id_property = r.id_property
+                AND p.deleted_at IS NULL
+               JOIN pms_settings_lodging_catalog pslc
+                 ON pslc.id_company = p.id_company
+                AND (pslc.id_property IS NULL OR pslc.id_property = p.id_property)
+                AND pslc.id_sale_item_catalog = li.id_line_item_catalog
+                AND pslc.deleted_at IS NULL
+                AND pslc.is_active = 1
+              WHERE p.id_company = ?
+                AND f.id_reservation = ?
+                AND li.item_type = \'sale_item\'
+                AND li.deleted_at IS NULL
+                AND COALESCE(li.is_active, 1) = 1
+                AND (li.status IS NULL OR li.status NOT IN (\'void\', \'canceled\', \'cancelled\'))';
+        $params = array($companyId, $reservationId);
+        if ($folioId > 0) {
+            $sql .= ' AND li.id_folio = ?';
+            $params[] = $folioId;
+        }
+        $sql .= ' ORDER BY li.created_at DESC, li.id_line_item DESC';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return is_array($rows) ? $rows : array();
+    } catch (Exception $e) {
+        return array();
+    }
+}
+
+function rw_delete_line_item_tree($reservationId, $rootLineItemId, $actorUserId)
+{
+    $reservationId = (int)$reservationId;
+    $rootLineItemId = (int)$rootLineItemId;
+    if ($reservationId <= 0 || $rootLineItemId <= 0) {
+        return 0;
+    }
+
+    $deleteOrder = array();
+    $descendants = rw_collect_line_item_descendants($rootLineItemId);
+    if ($descendants) {
+        $deleteOrder = array_reverse(array_values(array_unique(array_map('intval', $descendants))));
+    }
+    $deleteOrder[] = $rootLineItemId;
+    $deleteOrder = array_values(array_unique(array_map('intval', $deleteOrder)));
+
+    $db = pms_get_connection();
+    $startedTx = false;
+    if (!$db->inTransaction()) {
+        $db->beginTransaction();
+        $startedTx = true;
+    }
+    $restoreSkipPercentRecalc = false;
+    $previousSkipPercentRecalc = 0;
+    $deletedCount = 0;
+    $affectedFolioIds = array();
+    try {
+        try {
+            $skipRow = $db->query('SELECT COALESCE(@pms_skip_percent_derived, 0) AS v')->fetch(PDO::FETCH_ASSOC);
+            if ($skipRow && isset($skipRow['v'])) {
+                $previousSkipPercentRecalc = (int)$skipRow['v'];
+            }
+            $db->exec('SET @pms_skip_percent_derived = 1');
+            $restoreSkipPercentRecalc = true;
+        } catch (Exception $ignoreSkipPercent) {
+            $restoreSkipPercentRecalc = false;
+            $previousSkipPercentRecalc = 0;
+        }
+
+        foreach ($deleteOrder as $deleteLineItemId) {
+            if ($deleteLineItemId <= 0) {
+                continue;
+            }
+            $snapshot = rw_fetch_line_item_snapshot($deleteLineItemId);
+            if (!$snapshot) {
+                continue;
+            }
+            $snapshotReservationId = isset($snapshot['id_reservation']) ? (int)$snapshot['id_reservation'] : 0;
+            if ($snapshotReservationId > 0 && $snapshotReservationId !== $reservationId) {
+                continue;
+            }
+            $snapshotFolioId = isset($snapshot['id_folio']) ? (int)$snapshot['id_folio'] : 0;
+            $snapshotCatalogId = isset($snapshot['id_line_item_catalog']) ? (int)$snapshot['id_line_item_catalog'] : 0;
+            $snapshotServiceDate = isset($snapshot['service_date']) && $snapshot['service_date'] !== '' ? (string)$snapshot['service_date'] : null;
+            pms_call_procedure('sp_sale_item_upsert', array(
+                'delete',
+                $deleteLineItemId,
+                $snapshotFolioId,
+                $reservationId,
+                $snapshotCatalogId > 0 ? $snapshotCatalogId : null,
+                null,
+                $snapshotServiceDate,
+                1,
+                null,
+                null,
+                'void',
+                $actorUserId
+            ));
+            if ($snapshotFolioId > 0) {
+                $affectedFolioIds[$snapshotFolioId] = true;
+            }
+            $deletedCount++;
+        }
+
+        if ($restoreSkipPercentRecalc) {
+            try {
+                $db->exec('SET @pms_skip_percent_derived = ' . (int)$previousSkipPercentRecalc);
+            } catch (Exception $ignoreRestoreSkipPercent) {
+            }
+        }
+
+        if ($affectedFolioIds) {
+            foreach (array_keys($affectedFolioIds) as $recalcFolioId) {
+                try {
+                    pms_call_procedure('sp_folio_recalc', array((int)$recalcFolioId));
+                } catch (Exception $ignoreFolioRecalc) {
+                }
+            }
+        }
+
+        if ($startedTx && $db->inTransaction()) {
+            $db->commit();
+        }
+    } catch (Exception $e) {
+        if ($restoreSkipPercentRecalc) {
+            try {
+                $db->exec('SET @pms_skip_percent_derived = ' . (int)$previousSkipPercentRecalc);
+            } catch (Exception $ignoreRestoreSkipPercent) {
+            }
+        }
+        if ($startedTx && $db->inTransaction()) {
+            $db->rollBack();
+        }
+        throw $e;
+    }
+
+    return $deletedCount;
+}
+
+function rw_sync_reservation_origin_from_lodging($companyCode, $companyId, $reservationId, $lodgingCatalogId, $actorUserId)
+{
+    $companyCode = trim((string)$companyCode);
+    $companyId = (int)$companyId;
+    $reservationId = (int)$reservationId;
+    $lodgingCatalogId = (int)$lodgingCatalogId;
+    if ($companyCode === '' || $companyId <= 0 || $reservationId <= 0 || $lodgingCatalogId <= 0) {
+        return;
+    }
+
+    $otaId = 0;
+    $sourceId = 0;
+    $sourceName = 'Directo';
+    $sourceInput = 'Directo';
+    $resolvedOrigin = false;
+    try {
+        $pdo = pms_get_connection();
+        $reservationPropertyId = 0;
+
+        $reservationStmt = $pdo->prepare(
+            'SELECT r.id_property
+               FROM reservation r
+               JOIN property p
+                 ON p.id_property = r.id_property
+                AND p.deleted_at IS NULL
+              WHERE r.id_reservation = ?
+                AND r.deleted_at IS NULL
+                AND p.id_company = ?
+              LIMIT 1'
+        );
+        $reservationStmt->execute(array($reservationId, $companyId));
+        $reservationRow = $reservationStmt->fetch(PDO::FETCH_ASSOC);
+        if ($reservationRow && isset($reservationRow['id_property'])) {
+            $reservationPropertyId = (int)$reservationRow['id_property'];
+        }
+        if ($reservationPropertyId <= 0) {
+            return;
+        }
+
+        if (function_exists('pms_reservation_source_has_column')
+            && pms_reservation_source_has_column($pdo, 'id_lodging_catalog')) {
+            $sourceStmt = $pdo->prepare(
+                'SELECT rsc.id_reservation_source,
+                        COALESCE(NULLIF(TRIM(rsc.source_name), \'\'), \'\') AS source_name
+                   FROM reservation_source_catalog rsc
+                  WHERE rsc.id_company = ?
+                    AND rsc.deleted_at IS NULL
+                    AND rsc.is_active = 1
+                    AND COALESCE(rsc.id_lodging_catalog, 0) = ?
+                    AND (rsc.id_property = ? OR rsc.id_property IS NULL)
+                  ORDER BY CASE WHEN rsc.id_property = ? THEN 0 ELSE 1 END,
+                           rsc.id_reservation_source
+                  LIMIT 1'
+            );
+            $sourceStmt->execute(array($companyId, $lodgingCatalogId, $reservationPropertyId, $reservationPropertyId));
+            $sourceRow = $sourceStmt->fetch(PDO::FETCH_ASSOC);
+            if ($sourceRow) {
+                $tmpSourceId = isset($sourceRow['id_reservation_source']) ? (int)$sourceRow['id_reservation_source'] : 0;
+                if ($tmpSourceId > 0) {
+                    $sourceId = $tmpSourceId;
+                    $tmpSourceName = trim((string)(isset($sourceRow['source_name']) ? $sourceRow['source_name'] : ''));
+                    if ($tmpSourceName !== '') {
+                        $sourceName = $tmpSourceName;
+                    }
+                }
+            }
+        }
+
+        $otaPlatform = '';
+        $otaStmt = $pdo->prepare(
+            'SELECT oa.id_ota_account,
+                    oa.platform
+               FROM ota_account_lodging_catalog oalc
+               JOIN ota_account oa
+                 ON oa.id_ota_account = oalc.id_ota_account
+                AND oa.id_company = ?
+                AND oa.deleted_at IS NULL
+                AND oa.is_active = 1
+                AND (oa.id_property = ? OR oa.id_property IS NULL)
+              WHERE oalc.id_line_item_catalog = ?
+                AND oalc.deleted_at IS NULL
+                AND oalc.is_active = 1
+              ORDER BY CASE WHEN oa.id_property = ? THEN 0 ELSE 1 END,
+                       oalc.sort_order,
+                       oa.id_ota_account
+              LIMIT 1'
+        );
+        $otaStmt->execute(array($companyId, $reservationPropertyId, $lodgingCatalogId, $reservationPropertyId));
+        $otaRow = $otaStmt->fetch(PDO::FETCH_ASSOC);
+        if ($otaRow) {
+            $otaId = isset($otaRow['id_ota_account']) ? (int)$otaRow['id_ota_account'] : 0;
+            $otaPlatform = strtolower(trim((string)(isset($otaRow['platform']) ? $otaRow['platform'] : '')));
+        }
+
+        // Regla: si hay mapeo OTA por catalogo, tiene prioridad sobre source catalog.
+        if ($otaId > 0) {
+            if (function_exists('pms_reservation_source_from_ota_platform')) {
+                $otaSource = (string)pms_reservation_source_from_ota_platform($otaPlatform);
+            } else {
+                $otaSource = $otaPlatform === 'booking'
+                    ? 'booking'
+                    : (($otaPlatform === 'airbnb' || $otaPlatform === 'abb')
+                        ? 'airbnb'
+                        : ($otaPlatform === 'expedia' ? 'expedia' : 'otro'));
+            }
+            if ($otaSource !== '') {
+                $sourceInput = $otaSource;
+            }
+            if ($otaPlatform === 'booking') {
+                $sourceName = 'Booking';
+            } elseif ($otaPlatform === 'airbnb' || $otaPlatform === 'abb') {
+                $sourceName = 'AirB&B';
+            } elseif ($otaPlatform === 'expedia') {
+                $sourceName = 'Expedia';
+            } else {
+                $sourceName = 'OTA';
+            }
+            $sourceId = 0;
+            $resolvedOrigin = true;
+        } elseif ($sourceId > 0) {
+            $otaId = 0;
+            $sourceInput = (string)$sourceId;
+            $resolvedOrigin = true;
+        }
+    } catch (Exception $e) {
+        $otaId = 0;
+        $sourceId = 0;
+        $sourceInput = 'Directo';
+        $sourceName = 'Directo';
+        $resolvedOrigin = false;
+    }
+
+    // Nunca forzar "Directo" cuando no hubo match del concepto.
+    if (!$resolvedOrigin) {
+        return;
+    }
+
+    pms_call_procedure('sp_reservation_update', array(
+        $companyCode,
+        $reservationId,
+        null,
+        $sourceInput,
+        $otaId > 0 ? $otaId : 0,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        $actorUserId
+    ));
+
+    // Forzar consistencia en casos donde el SP no limpie todos los campos relacionados.
+    try {
+        $pdo = pms_get_connection();
+        $stmt = $pdo->prepare(
+            'UPDATE reservation r
+               JOIN property p
+                 ON p.id_property = r.id_property
+                AND p.deleted_at IS NULL
+               SET r.id_ota_account = ?,
+                   r.id_reservation_source = ?,
+                   r.source = ?,
+                   r.updated_at = NOW()
+             WHERE r.id_reservation = ?
+               AND r.deleted_at IS NULL
+               AND p.id_company = ?'
+        );
+        $stmt->execute(array(
+            $otaId > 0 ? $otaId : null,
+            $sourceId > 0 ? $sourceId : null,
+            $sourceName !== '' ? $sourceName : 'Directo',
+            $reservationId,
+            $companyId
+        ));
+    } catch (Exception $ignoreForceSync) {
+    }
+}
+
+$step = isset($_REQUEST['wizard_step']) ? (int)$_REQUEST['wizard_step'] : 1;
+$forceStep = (int)rw_input('wizard_force_step', 0);
+if ($forceStep > 0) {
+    $step = $forceStep;
+}
+$confirmSubmit = isset($_POST['wizard_confirm']) && $_POST['wizard_confirm'] === '1';
+if ($confirmSubmit) {
+    $step = 3;
+}
+$errors = array();
+$messages = array();
+$redirectToCalendar = false;
+$calendarFocusReservationId = 0;
+$calendarFocusPropertyCode = '';
+$calendarFocusRoomCode = '';
+$calendarFocusCheckIn = '';
+$editingReservationId = 0;
+$editingReservationStatus = '';
+$editingGuestId = 0;
+$editingFolioCount = 0;
+$editingNotesInternal = '';
+$editingDetail = null;
+$editingPrimaryLodging = array();
+$replaceLodgingMode = (int)rw_input('wizard_replace_lodging', 0) === 1;
+$replaceLodgingFolioId = (int)rw_input('wizard_replace_folio_id', 0);
+
+function rw_input($key, $default = '') {
+  if (isset($_POST[$key])) return $_POST[$key];
+  if (isset($_GET[$key])) return $_GET[$key];
+  return $default;
+}
+
+function rw_set_calendar_focus(
+    &$focusReservationId,
+    &$focusPropertyCode,
+    &$focusRoomCode,
+    &$focusCheckIn,
+    $reservationId,
+    $propertyCode,
+    $roomCode,
+    $checkIn
+) {
+    $focusReservationId = max(0, (int)$reservationId);
+    $focusPropertyCode = strtoupper(trim((string)$propertyCode));
+    $focusRoomCode = strtoupper(trim((string)$roomCode));
+    $checkIn = trim((string)$checkIn);
+    $focusCheckIn = preg_match('/^\d{4}-\d{2}-\d{2}$/', $checkIn) ? $checkIn : '';
+}
+
+function rw_build_calendar_return_url(
+    $propertyCode,
+    $startDate,
+    $viewMode,
+    $orderMode,
+    $currentSubtab,
+    $dirtyTabs,
+    $shouldRestore,
+    $focusReservationId = 0,
+    $focusPropertyCode = '',
+    $focusRoomCode = '',
+    $focusCheckIn = ''
+) {
+    $query = array(
+        'view' => 'calendar'
+    );
+    $propertyCode = strtoupper(trim((string)$propertyCode));
+    $focusReservationId = max(0, (int)$focusReservationId);
+    $focusPropertyCode = strtoupper(trim((string)$focusPropertyCode));
+    $focusRoomCode = strtoupper(trim((string)$focusRoomCode));
+    $focusCheckIn = trim((string)$focusCheckIn);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $focusCheckIn)) {
+        $focusCheckIn = '';
+    }
+    if ($propertyCode !== '' && $focusPropertyCode !== '' && $propertyCode !== $focusPropertyCode) {
+        $propertyCode = $focusPropertyCode;
+    }
+    $startDate = trim((string)$startDate);
+    if ($focusCheckIn !== '') {
+        $focusDateObj = DateTime::createFromFormat('Y-m-d', $focusCheckIn);
+        $baseDateObj = $startDate !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDate)
+            ? DateTime::createFromFormat('Y-m-d', $startDate)
+            : null;
+        if (!$baseDateObj || !$focusDateObj) {
+            $startDate = $focusCheckIn;
+        } else {
+            $visibleStartObj = clone $baseDateObj;
+            $visibleStartObj->modify('-21 days');
+            $visibleEndObj = clone $baseDateObj;
+            $visibleEndObj->modify('+2 months');
+            if ($focusDateObj < $visibleStartObj || $focusDateObj > $visibleEndObj) {
+                $startDate = $focusCheckIn;
+            }
+        }
+    }
+    if ($propertyCode !== '') {
+        $query['property_code'] = $propertyCode;
+    }
+    if ($startDate !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDate)) {
+        $query['start_date'] = $startDate;
+    }
+    $viewMode = trim((string)$viewMode);
+    if ($viewMode !== '') {
+        $query['view_mode'] = $viewMode;
+    }
+    $orderMode = trim((string)$orderMode);
+    if ($orderMode !== '') {
+        $query['order_mode'] = $orderMode;
+    }
+    $currentSubtab = trim((string)$currentSubtab);
+    if ($currentSubtab !== '') {
+        $query['calendar_current_subtab'] = $currentSubtab;
+    }
+    $dirtyTabs = trim((string)$dirtyTabs);
+    if ($dirtyTabs !== '') {
+        $query['calendar_dirty_tabs'] = $dirtyTabs;
+    }
+    if ($shouldRestore) {
+        $query['calendar_restore'] = '1';
+    }
+    if ($focusReservationId > 0) {
+        $query['calendar_focus_reservation_id'] = $focusReservationId;
+    }
+    if ($focusPropertyCode !== '') {
+        $query['calendar_focus_property_code'] = $focusPropertyCode;
+    }
+    if ($focusRoomCode !== '') {
+        $query['calendar_focus_room_code'] = $focusRoomCode;
+    }
+    if ($focusCheckIn !== '') {
+        $query['calendar_focus_check_in'] = $focusCheckIn;
+    }
+    return 'index.php?' . http_build_query($query);
+}
+
+$wizardReturnView = strtolower(trim((string)rw_input('wizard_return_view', 'calendar')));
+if ($wizardReturnView !== 'calendar') {
+    $wizardReturnView = 'calendar';
+}
+$wizardReturnPropertyCode = strtoupper(trim((string)rw_input('wizard_return_property_code', '')));
+$wizardReturnStartDate = trim((string)rw_input('wizard_return_start_date', ''));
+$wizardReturnViewMode = trim((string)rw_input('wizard_return_view_mode', ''));
+$wizardReturnOrderMode = trim((string)rw_input('wizard_return_order_mode', ''));
+$wizardReturnCurrentSubtab = trim((string)rw_input('wizard_return_calendar_current_subtab', ''));
+$wizardReturnDirtyTabs = trim((string)rw_input('wizard_return_calendar_dirty_tabs', ''));
+$wizardReturnRestore = (int)rw_input('wizard_return_restore', 0) === 1;
+$wizardReturnUrl = rw_build_calendar_return_url(
+    $wizardReturnPropertyCode,
+    $wizardReturnStartDate,
+    $wizardReturnViewMode,
+    $wizardReturnOrderMode,
+    $wizardReturnCurrentSubtab,
+    $wizardReturnDirtyTabs,
+    $wizardReturnRestore
+);
+
+function wizard_normalize_phone($phone) {
+  $value = preg_replace('/\s+/', '', (string)$phone);
+  $value = preg_replace('/[^\d+]/', '', $value);
+  if (strpos($value, '00') === 0) {
+    $value = '+' . substr($value, 2);
+  }
+  return $value;
+}
+
+function wizard_find_guest_id($companyCode, $actorUserId, $email, $phone, $names, $last, $maiden) {
+  $query = '';
+  $email = trim((string)$email);
+  $phone = trim((string)$phone);
+  if ($email !== '') {
+    $query = $email;
+  } elseif ($phone !== '') {
+    $query = $phone;
+  } else {
+    $full = trim($names . ' ' . $last . ' ' . $maiden);
+    if ($full !== '') $query = $full;
+  }
+  if ($query === '') return 0;
+  $sets = pms_call_procedure('sp_portal_guest_data', array(
+    $companyCode,
+    $query,
+    1,
+    0,
+    (int)$actorUserId
+  ));
+  $rows = isset($sets[0]) && is_array($sets[0]) ? $sets[0] : array();
+  if (!$rows) return 0;
+  $emailLower = strtolower($email);
+  $phoneNorm = wizard_normalize_phone($phone);
+  $targetName = trim(preg_replace('/\s+/', ' ', strtolower(trim($names . ' ' . $last . ' ' . $maiden))));
+  foreach ($rows as $row) {
+    $rowId = isset($row['id_guest']) ? (int)$row['id_guest'] : 0;
+    if ($rowId <= 0) continue;
+    if ($emailLower !== '' && isset($row['email']) && strtolower((string)$row['email']) === $emailLower) {
+      return $rowId;
+    }
+    if ($phoneNorm !== '' && isset($row['phone']) && wizard_normalize_phone($row['phone']) === $phoneNorm) {
+      return $rowId;
+    }
+    if ($targetName !== '' && isset($row['names'])) {
+      $rowName = trim(preg_replace('/\s+/', ' ', strtolower(trim((string)$row['names'] . ' ' . (string)($row['last_name'] ?? '')))));
+      if ($rowName !== '' && $rowName === $targetName) {
+        return $rowId;
+      }
+    }
+  }
+  if ($targetName !== '' && count($rows) === 1) {
+    $rowId = isset($rows[0]['id_guest']) ? (int)$rows[0]['id_guest'] : 0;
+    if ($rowId > 0) return $rowId;
+  }
+  return 0;
+}
+
+function wizard_field_class($value, $required = false) {
+    $hasValue = trim((string)$value) !== '';
+    if ($hasValue) {
+        return 'wizard-field is-filled';
+    }
+    return $required ? 'wizard-field is-empty' : 'wizard-field';
+}
+
+function rw_ota_options_for_property(array $otaAccountsByProperty, $propertyCode, $includeNone = false)
+{
+    if (function_exists('pms_ota_options_for_property')) {
+        // Requisito de UI: en Reservaciones/Wizard siempre mostrar todas las OTAs.
+        return pms_ota_options_for_property($otaAccountsByProperty, '', $includeNone ? true : false);
+    }
+    if ($includeNone) {
+        return array(
+            array(
+                'id_ota_account' => 0,
+                'ota_name' => 'Directo',
+                'platform' => 'other',
+                'source' => 'otro'
+            )
+        );
+    }
+    return array();
+}
+
+function rw_origin_key_from_input($rawValue)
+{
+    $raw = trim((string)$rawValue);
+    if ($raw === '') {
+        return '';
+    }
+    if (preg_match('/^(source|ota):\\d+$/', $raw)) {
+        return $raw;
+    }
+    if (is_numeric($raw)) {
+        return 'source:' . (int)$raw;
+    }
+    return '';
+}
+
+function rw_origin_options_for_property(array $reservationSourcesByProperty, array $otaAccountsByProperty, $propertyCode)
+{
+    $rows = array();
+    $seen = array();
+
+    $sourceOptions = function_exists('pms_reservation_source_options_for_property')
+        ? pms_reservation_source_options_for_property($reservationSourcesByProperty, $propertyCode, true)
+        : array(
+            array(
+                'id_reservation_source' => 0,
+                'source_name' => 'Directo',
+                'notes' => '',
+                'id_property' => null,
+                'property_code' => ''
+            )
+        );
+    foreach ($sourceOptions as $sourceRow) {
+        $sourceId = isset($sourceRow['id_reservation_source']) ? (int)$sourceRow['id_reservation_source'] : 0;
+        $sourceName = trim((string)(isset($sourceRow['source_name']) ? $sourceRow['source_name'] : ''));
+        if ($sourceName === '') {
+            $sourceName = $sourceId > 0 ? ('Origen #' . $sourceId) : 'Directo';
+        }
+        $originKey = 'source:' . $sourceId;
+        if (isset($seen[$originKey])) {
+            continue;
+        }
+        $seen[$originKey] = true;
+        $rows[] = array(
+            'origin_key' => $originKey,
+            'origin_label' => $sourceName,
+            'source_id' => $sourceId,
+            'ota_account_id' => 0,
+            'source_value' => $sourceId > 0 ? (string)$sourceId : $sourceName
+        );
+    }
+
+    $otaOptions = rw_ota_options_for_property($otaAccountsByProperty, $propertyCode, false);
+    foreach ($otaOptions as $otaRow) {
+        $otaId = isset($otaRow['id_ota_account']) ? (int)$otaRow['id_ota_account'] : 0;
+        if ($otaId <= 0) {
+            continue;
+        }
+        $otaName = trim((string)(isset($otaRow['ota_name']) ? $otaRow['ota_name'] : ''));
+        if ($otaName === '') {
+            $otaName = 'Origen #' . $otaId;
+        }
+        $otaSource = trim((string)(isset($otaRow['source']) ? $otaRow['source'] : ''));
+        if ($otaSource === '') {
+            $otaSource = 'otro';
+        }
+        $originKey = 'ota:' . $otaId;
+        if (isset($seen[$originKey])) {
+            continue;
+        }
+        $seen[$originKey] = true;
+        $rows[] = array(
+            'origin_key' => $originKey,
+            'origin_label' => $otaName,
+            'source_id' => 0,
+            'ota_account_id' => $otaId,
+            'source_value' => $otaSource
+        );
+    }
+
+    if (!$rows) {
+        $rows[] = array(
+            'origin_key' => 'source:0',
+            'origin_label' => 'Directo',
+            'source_id' => 0,
+            'ota_account_id' => 0,
+            'source_value' => 'Directo'
+        );
+    }
+
+    return $rows;
+}
+
+function rw_origin_row_for_key(array $originOptions, $originKey)
+{
+    $key = rw_origin_key_from_input($originKey);
+    if ($key === '') {
+        return null;
+    }
+    foreach ($originOptions as $row) {
+        if ((string)(isset($row['origin_key']) ? $row['origin_key'] : '') === $key) {
+            return $row;
+        }
+    }
+    return null;
+}
+
+function rw_nights_between($checkIn, $checkOut)
+{
+    try {
+        $dtIn = new DateTime((string)$checkIn);
+        $dtOut = new DateTime((string)$checkOut);
+        $diff = (int)$dtIn->diff($dtOut)->format('%r%a');
+        return $diff > 0 ? $diff : 0;
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+function rw_normalize_block_chunks($raw, array $rooms, array $properties)
+{
+    $decoded = json_decode((string)$raw, true);
+    if (!is_array($decoded)) {
+        return array();
+    }
+    $propertyNames = array();
+    foreach ($properties as $propertyRow) {
+        $propertyCode = strtoupper((string)(isset($propertyRow['code']) ? $propertyRow['code'] : ''));
+        if ($propertyCode === '') {
+            continue;
+        }
+        $propertyNames[$propertyCode] = isset($propertyRow['name']) ? (string)$propertyRow['name'] : $propertyCode;
+    }
+    $chunks = array();
+    foreach ($decoded as $idx => $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $propertyCode = strtoupper(trim((string)(isset($row['property_code']) ? $row['property_code'] : '')));
+        $roomCode = strtoupper(trim((string)(isset($row['room_code']) ? $row['room_code'] : '')));
+        $checkIn = trim((string)(isset($row['start_date']) ? $row['start_date'] : ''));
+        $checkOut = trim((string)(isset($row['end_date']) ? $row['end_date'] : ''));
+        if ($propertyCode === '' || $roomCode === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $checkIn) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $checkOut)) {
+            continue;
+        }
+        $nights = rw_nights_between($checkIn, $checkOut);
+        if ($nights <= 0) {
+            continue;
+        }
+        $roomRow = rw_find_room($rooms, $propertyCode, $roomCode);
+        if (!$roomRow) {
+            continue;
+        }
+        $roomName = trim((string)(isset($roomRow['name']) ? $roomRow['name'] : ''));
+        $roomLabel = $roomCode;
+        if ($roomName !== '') {
+            $roomLabel .= ' - ' . $roomName;
+        }
+        $chunks[] = array(
+            'block_index' => count($chunks),
+            'property_code' => $propertyCode,
+            'property_name' => isset($propertyNames[$propertyCode]) ? $propertyNames[$propertyCode] : $propertyCode,
+            'room_code' => $roomCode,
+            'room_name' => $roomName,
+            'room_label' => $roomLabel,
+            'category_code' => isset($roomRow['category_code']) ? strtoupper((string)$roomRow['category_code']) : '',
+            'check_in' => $checkIn,
+            'check_out' => $checkOut,
+            'nights' => $nights
+        );
+    }
+    return $chunks;
+}
+
+$editingReservationId = (int)rw_input('wizard_reservation_id', 0);
+if ($editingReservationId > 0) {
+    try {
+        $detailSets = pms_call_procedure('sp_portal_reservation_data', array(
+            $companyCode,
+            null,
+            null,
+            null,
+            null,
+            $editingReservationId,
+            $actorUserId
+        ));
+        $editingDetail = isset($detailSets[1][0]) ? $detailSets[1][0] : null;
+        if ($editingDetail && isset($editingDetail['property_code'])) {
+            pms_require_property_access((string)$editingDetail['property_code']);
+        }
+        if ($editingDetail && isset($editingDetail['status'])) {
+            $editingReservationStatus = strtolower(trim((string)$editingDetail['status']));
+            if ($editingReservationStatus === 'encasa') {
+                $editingReservationStatus = 'en casa';
+            }
+        }
+        if ($editingDetail && isset($editingDetail['id_guest'])) {
+            $editingGuestId = (int)$editingDetail['id_guest'];
+        }
+        if (isset($detailSets[2]) && is_array($detailSets[2])) {
+            $editingFolioCount = count($detailSets[2]);
+        }
+        if ($editingDetail && isset($editingDetail['notes_internal'])) {
+            $editingNotesInternal = trim((string)$editingDetail['notes_internal']);
+        }
+        $editingPrimaryLodging = rw_find_primary_lodging_line_item($companyId, $editingReservationId);
+        if ($replaceLodgingFolioId <= 0 && isset($editingPrimaryLodging['id_folio'])) {
+            $replaceLodgingFolioId = (int)$editingPrimaryLodging['id_folio'];
+        }
+    } catch (Exception $e) {
+        $editingDetail = null;
+        $editingPrimaryLodging = array();
+    }
+}
+
+$wizardSelectedGuestId = (int)rw_input('wizard_selected_guest_id', 0);
+$wizardBlockPayloadRaw = (string)rw_input('wizard_block_payload', '');
+$wizardBlockChunks = (!$requestedReservationId && !$isReplaceLodgingRequest)
+    ? rw_normalize_block_chunks($wizardBlockPayloadRaw, $rooms, $properties)
+    : array();
+$wizardIsBlockMode = !empty($wizardBlockChunks);
+  $wizard = array(
+    'property_code' => strtoupper((string)rw_input('wizard_property', '')),
+    'category_code' => strtoupper((string)rw_input('wizard_category', '')),
+    'room_code'     => strtoupper((string)rw_input('wizard_room', '')),
+    'check_in'      => (string)rw_input('wizard_check_in', ''),
+    'check_out'     => (string)rw_input('wizard_check_out', ''),
+    'source_id'     => (string)rw_input('wizard_source_id', ''),
+    'adults'        => (int)rw_input('wizard_adults', 1),
+    'children'      => (int)rw_input('wizard_children', 0),
+    'code'          => trim((string)rw_input('wizard_code', '')),
+      'guest_id'      => (int)rw_input('wizard_guest_id', 0),
+    'guest_prefix'  => (string)rw_input('wizard_phone_prefix', $defaultPhonePrefix),
+    'guest_phone'   => (string)rw_input('wizard_phone', ''),
+    'guest_email'   => (string)rw_input('wizard_email', ''),
+    'guest_names'   => (string)rw_input('wizard_guest_names', ''),
+    'guest_last'    => (string)rw_input('wizard_guest_last', ''),
+    'guest_maiden'  => (string)rw_input('wizard_guest_maiden', ''),
+    'notes_internal' => (string)rw_input('wizard_notes_internal', '')
+  );
+  if ($wizardIsBlockMode && isset($wizardBlockChunks[0]['property_code'])) {
+      $wizard['property_code'] = strtoupper((string)$wizardBlockChunks[0]['property_code']);
+      $wizard['category_code'] = '';
+      $wizard['room_code'] = '';
+      $wizard['check_in'] = '';
+      $wizard['check_out'] = '';
+  }
+  $wizardBlockPropertyCode = $wizardIsBlockMode && isset($wizardBlockChunks[0]['property_code'])
+      ? strtoupper((string)$wizardBlockChunks[0]['property_code'])
+      : '';
+  if (function_exists('pms_phone_extract_dial')) {
+      $wizard['guest_prefix'] = pms_phone_extract_dial($wizard['guest_prefix'], $defaultPhonePrefix);
+  }
+  if ($wizard['guest_id'] <= 0 && $wizardSelectedGuestId > 0) {
+      $wizard['guest_id'] = $wizardSelectedGuestId;
+  }
+$lockReservationFields = $wizardIsBlockMode || ($wizard['property_code'] !== ''
+    || $wizard['category_code'] !== ''
+    || $wizard['room_code'] !== ''
+    || $wizard['check_in'] !== ''
+    || $wizard['check_out'] !== '');
+$wizardChildCatalogIdsRaw = rw_input('wizard_child_catalog_id', array());
+$wizardChildParentCatalogIdsRaw = rw_input('wizard_child_parent_catalog_id', array());
+$wizardChildTotalsRaw = rw_input('wizard_child_total', array());
+if (!is_array($wizardChildCatalogIdsRaw)) $wizardChildCatalogIdsRaw = array($wizardChildCatalogIdsRaw);
+if (!is_array($wizardChildParentCatalogIdsRaw)) $wizardChildParentCatalogIdsRaw = array($wizardChildParentCatalogIdsRaw);
+if (!is_array($wizardChildTotalsRaw)) $wizardChildTotalsRaw = array($wizardChildTotalsRaw);
+// Compatibilidad hacia atrás: aceptar payload legado (un solo derivado).
+if (!$wizardChildCatalogIdsRaw) {
+    $legacyChildCatalogId = (int)rw_input('wizard_child_catalog_id_legacy', 0);
+    $legacyChildTotal = (string)rw_input('wizard_child_total_legacy', '');
+    if ($legacyChildCatalogId > 0) {
+        $wizardChildCatalogIdsRaw = array($legacyChildCatalogId);
+        $wizardChildTotalsRaw = array($legacyChildTotal);
+    }
+}
+$wizardChildCatalogIds = array();
+$wizardChildParentCatalogIds = array();
+$wizardChildTotals = array();
+foreach ($wizardChildCatalogIdsRaw as $idx => $childCatalogIdRaw) {
+    $childCatalogId = (int)$childCatalogIdRaw;
+    if ($childCatalogId <= 0) continue;
+    $wizardChildCatalogIds[] = $childCatalogId;
+    $wizardChildParentCatalogIds[] = isset($wizardChildParentCatalogIdsRaw[$idx]) ? (int)$wizardChildParentCatalogIdsRaw[$idx] : 0;
+    $wizardChildTotals[] = isset($wizardChildTotalsRaw[$idx]) ? (string)$wizardChildTotalsRaw[$idx] : '';
+}
+$wizardFixedTotal = (string)rw_input('wizard_fixed_total', '');
+$postedBlockBreakdownDates = isset($_POST['breakdown_block_date']) && is_array($_POST['breakdown_block_date'])
+    ? (array)$_POST['breakdown_block_date']
+    : array();
+$postedBlockBreakdownAmounts = isset($_POST['breakdown_block_amount']) && is_array($_POST['breakdown_block_amount'])
+    ? (array)$_POST['breakdown_block_amount']
+    : array();
+$wizardExtraLodgingConcepts = array();
+$wizardExtraLodgingTotals = array();
+$wizardExtraChildrenJson = array();
+// Pago opcional al confirmar en paso de cobro.
+$wizardIncludePayment = (int)rw_input('wizard_include_payment', 0) === 1;
+$wizardPaymentMode = strtolower(trim((string)rw_input('wizard_payment_mode', 'full')));
+if ($wizardPaymentMode !== 'fixed' && $wizardPaymentMode !== 'full') {
+    $wizardPaymentMode = 'full';
+}
+$wizardPaymentMethodSingle = trim((string)rw_input('wizard_payment_method_single', ''));
+$wizardPaymentFixedAmount = trim((string)rw_input('wizard_payment_fixed_amount', ''));
+$wizardPaymentReferenceSingle = trim((string)rw_input('wizard_payment_reference_single', ''));
+$wizardPaymentDateSingle = trim((string)rw_input('wizard_payment_date_single', ''));
+if ($wizardPaymentDateSingle === '') {
+    $wizardPaymentDateSingle = date('Y-m-d');
+}
+if (isset($_POST['wizard_lodging_concept_extra']) && is_array($_POST['wizard_lodging_concept_extra'])) {
+    $extraTotalsPosted = isset($_POST['wizard_lodging_total_extra']) && is_array($_POST['wizard_lodging_total_extra'])
+        ? (array)$_POST['wizard_lodging_total_extra']
+        : array();
+    $extraChildrenJsonPosted = isset($_POST['wizard_lodging_children_json_extra']) && is_array($_POST['wizard_lodging_children_json_extra'])
+        ? (array)$_POST['wizard_lodging_children_json_extra']
+        : array();
+    foreach ((array)$_POST['wizard_lodging_concept_extra'] as $extraIdx => $extraConceptIdRaw) {
+        $extraConceptId = (int)$extraConceptIdRaw;
+        if ($extraConceptId > 0) {
+            $wizardExtraLodgingConcepts[] = $extraConceptId;
+            $wizardExtraLodgingTotals[] = isset($extraTotalsPosted[$extraIdx]) ? (string)$extraTotalsPosted[$extraIdx] : '';
+            $wizardExtraChildrenJson[] = isset($extraChildrenJsonPosted[$extraIdx]) ? (string)$extraChildrenJsonPosted[$extraIdx] : '[]';
+        }
+    }
+}
+$hasPost = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
+$hasWizardSubmit = isset($_POST['wizard_next']) || isset($_POST['wizard_confirm']) || isset($_POST['wizard_create_now']);
+if ($hasWizardSubmit) {
+    if ($wizard['property_code'] !== '') {
+        pms_require_property_access($wizard['property_code']);
+    }
+    if ($editingReservationId > 0) {
+        pms_require_permission('reservations.edit');
+    } else {
+        pms_require_permission('reservations.create');
+    }
+}
+if (isset($_POST['wizard_create_now']) && $_POST['wizard_create_now'] === '1' && $editingReservationId > 0) {
+    pms_require_permission('reservations.status_change');
+}
+if (isset($_POST['wizard_confirm']) && $_POST['wizard_confirm'] === '1') {
+    pms_require_permission('reservations.manage_folio');
+    pms_require_permission('reservations.post_charge');
+    if ((int)rw_input('wizard_include_payment', 0) === 1) {
+        pms_require_permission('reservations.post_payment');
+    }
+    if ($editingReservationId > 0 && in_array($editingReservationStatus, array('apartado', 'pendiente', 'pending', 'hold'), true)) {
+        pms_require_permission('reservations.status_change');
+    }
+}
+if ($replaceLodgingMode && $editingReservationId <= 0) {
+    $errors[] = 'Para cambiar tipo de hospedaje debes abrir una reservacion existente.';
+    $replaceLodgingMode = false;
+    $replaceLodgingFolioId = 0;
+}
+$wizardLodgingConceptValue = (string)rw_input('wizard_lodging_concept', '');
+if ($wizardLodgingConceptValue === '' && !$hasWizardSubmit && $replaceLodgingMode) {
+    $currentCatalogId = isset($editingPrimaryLodging['id_line_item_catalog']) ? (int)$editingPrimaryLodging['id_line_item_catalog'] : 0;
+    if ($currentCatalogId > 0) {
+        $wizardLodgingConceptValue = (string)$currentCatalogId;
+    }
+}
+if ($editingDetail && (!$hasPost || !$hasWizardSubmit)) {
+    if (isset($editingDetail['property_code'])) {
+        $wizard['property_code'] = strtoupper((string)$editingDetail['property_code']);
+    }
+    if (isset($editingDetail['category_code'])) {
+        $wizard['category_code'] = strtoupper((string)$editingDetail['category_code']);
+    }
+    if (isset($editingDetail['room_code'])) {
+        $wizard['room_code'] = strtoupper((string)$editingDetail['room_code']);
+    }
+    if (isset($editingDetail['check_in_date'])) {
+        $wizard['check_in'] = (string)$editingDetail['check_in_date'];
+    }
+    if (isset($editingDetail['check_out_date'])) {
+        $wizard['check_out'] = (string)$editingDetail['check_out_date'];
+    }
+    $editingOtaId = isset($editingDetail['id_ota_account']) ? (int)$editingDetail['id_ota_account'] : 0;
+    if ($editingOtaId > 0) {
+        $wizard['source_id'] = 'ota:' . $editingOtaId;
+    } elseif (isset($editingDetail['id_reservation_source'])) {
+        $wizard['source_id'] = 'source:' . (int)$editingDetail['id_reservation_source'];
+    }
+    if (isset($editingDetail['adults'])) {
+        $wizard['adults'] = (int)$editingDetail['adults'];
+    }
+    if (isset($editingDetail['children'])) {
+        $wizard['children'] = (int)$editingDetail['children'];
+    }
+    if (isset($editingDetail['guest_names'])) {
+        $wizard['guest_names'] = (string)$editingDetail['guest_names'];
+    }
+    if (isset($editingDetail['guest_last_name'])) {
+        $wizard['guest_last'] = (string)$editingDetail['guest_last_name'];
+    }
+    if (isset($editingDetail['guest_maiden_name'])) {
+        $wizard['guest_maiden'] = (string)$editingDetail['guest_maiden_name'];
+    }
+    if (isset($editingDetail['guest_email'])) {
+        $wizard['guest_email'] = (string)$editingDetail['guest_email'];
+    }
+    if (isset($editingDetail['guest_phone'])) {
+        $wizard['guest_phone'] = (string)$editingDetail['guest_phone'];
+    }
+    if ($editingGuestId > 0) {
+        $wizard['guest_id'] = $editingGuestId;
+    }
+    if (isset($editingDetail['reservation_code']) && (string)$editingDetail['reservation_code'] !== '') {
+        $wizard['code'] = (string)$editingDetail['reservation_code'];
+    }
+    if ($editingNotesInternal !== '') {
+        $wizard['notes_internal'] = $editingNotesInternal;
+    }
+    if ($wizard['guest_phone'] !== '' && preg_match('/^(\\+\\d{1,4})\\s*(.*)$/', $wizard['guest_phone'], $matches)) {
+        $wizard['guest_prefix'] = $matches[1];
+        $wizard['guest_phone'] = trim($matches[2]);
+    }
+}
+
+$wizardSourceOptionsCurrent = rw_origin_options_for_property(
+    $reservationSourcesByProperty,
+    $otaAccountsByProperty,
+    $wizard['property_code']
+);
+$wizard['source_id'] = rw_origin_key_from_input($wizard['source_id']);
+$wizardOriginRowCurrent = rw_origin_row_for_key($wizardSourceOptionsCurrent, $wizard['source_id']);
+if ($wizardOriginRowCurrent === null && !empty($wizardSourceOptionsCurrent)) {
+    $wizardOriginRowCurrent = $wizardSourceOptionsCurrent[0];
+}
+if ($wizardOriginRowCurrent === null) {
+    $wizardOriginRowCurrent = array(
+        'origin_key' => 'source:0',
+        'source_id' => 0,
+        'ota_account_id' => 0,
+        'source_value' => 'Directo'
+    );
+}
+$wizard['source_id'] = (string)(isset($wizardOriginRowCurrent['origin_key']) ? $wizardOriginRowCurrent['origin_key'] : 'source:0');
+$wizardSourceInput = trim((string)(isset($wizardOriginRowCurrent['source_value']) ? $wizardOriginRowCurrent['source_value'] : ''));
+if ($wizardSourceInput === '') {
+    $wizardSourceInput = 'Directo';
+}
+$wizardOtaAccountId = isset($wizardOriginRowCurrent['ota_account_id']) ? (int)$wizardOriginRowCurrent['ota_account_id'] : 0;
+if (!isset($phonePrefixDialMap[$wizard['guest_prefix']])) {
+    $wizard['guest_prefix'] = $defaultPhonePrefix;
+}
+$wizardPaymentCatalogOptions = rw_payment_catalogs_for_reservation(
+    $paymentCatalogsByProperty,
+    $wizard['property_code'],
+    $companyId,
+    $editingReservationId > 0 ? $editingReservationId : 0
+);
+if ($wizardPaymentMethodSingle === '' && !empty($wizardPaymentCatalogOptions)) {
+    $wizardPaymentMethodSingle = (string)(int)$wizardPaymentCatalogOptions[0]['id_payment_catalog'];
+}
+
+// Sincronizar y validar categoria/habitacion para evitar combinaciones inconsistentes.
+if ($wizard['property_code'] !== '' && $wizard['room_code'] !== '') {
+    $roomMatch = rw_find_room($rooms, $wizard['property_code'], $wizard['room_code']);
+    if ($roomMatch) {
+        $roomCategoryCode = '';
+        if (!empty($roomMatch['category_code'])) {
+            $roomCategoryCode = strtoupper((string)$roomMatch['category_code']);
+        } elseif (!empty($roomMatch['category_name'])) {
+            $roomCategoryName = trim((string)$roomMatch['category_name']);
+            foreach ($categoryRows as $cRow) {
+                if (strtoupper((string)$cRow['property_code']) !== $wizard['property_code']) {
+                    continue;
+                }
+                $candidateCode = strtoupper((string)(isset($cRow['code']) ? $cRow['code'] : ''));
+                $candidateName = trim((string)(isset($cRow['name']) ? $cRow['name'] : ''));
+                if ($candidateName !== '' && strcasecmp($candidateName, $roomCategoryName) === 0) {
+                    $roomCategoryCode = $candidateCode;
+                    break;
+                }
+            }
+        } elseif (!empty($roomMatch['id_category'])) {
+            $rid = (int)$roomMatch['id_category'];
+            foreach ($categoryRows as $cRow) {
+                if ((int)$cRow['id_category'] === $rid && strtoupper((string)$cRow['property_code']) === $wizard['property_code']) {
+                    $roomCategoryCode = strtoupper((string)$cRow['code']);
+                    break;
+                }
+            }
+        }
+
+        if ($roomCategoryCode !== '') {
+            $wizard['category_code'] = $roomCategoryCode;
+        }
+    } else {
+        $wizard['room_code'] = '';
+    }
+}
+
+$breakdown = array();
+$postedBreakdownDates = isset($_POST['breakdown_date']) ? (array)$_POST['breakdown_date'] : array();
+$postedBreakdownAmounts = isset($_POST['breakdown_amount']) ? (array)$_POST['breakdown_amount'] : array();
+$nights = 0;
+$lodgingOptions = array();
+$createNow = isset($_POST['wizard_create_now']) && $_POST['wizard_create_now'] === '1';
+$goBack = isset($_POST['wizard_back']) && $_POST['wizard_back'] === '1';
+
+if ($goBack) {
+    $step = 1;
+}
+
+$replaceLodgingHasCurrentPrice = false;
+$replaceLodgingCurrentTotalCents = 0;
+if ($replaceLodgingMode && $editingReservationId > 0 && !empty($editingPrimaryLodging)) {
+    $existingAmountCents = isset($editingPrimaryLodging['amount_cents']) ? (int)$editingPrimaryLodging['amount_cents'] : 0;
+    $existingQty = isset($editingPrimaryLodging['quantity']) ? (int)$editingPrimaryLodging['quantity'] : 0;
+    $existingUnitCents = isset($editingPrimaryLodging['unit_price_cents']) ? (int)$editingPrimaryLodging['unit_price_cents'] : 0;
+    $computedAmountCents = ($existingQty > 0 && $existingUnitCents !== 0) ? ((int)$existingQty * (int)$existingUnitCents) : 0;
+    $replaceLodgingCurrentTotalCents = $existingAmountCents !== 0 ? $existingAmountCents : $computedAmountCents;
+    if ($replaceLodgingCurrentTotalCents < 0) {
+        $replaceLodgingCurrentTotalCents = 0;
+    }
+    $replaceLodgingHasCurrentPrice = true;
+}
+
+// Si no viene de un submit de "Siguiente" o "Crear reserva", forzamos paso 1
+if (
+    !isset($_POST['wizard_next']) &&
+    !isset($_POST['wizard_confirm']) &&
+    !$createNow &&
+    $step > 1 &&
+    $forceStep <= 0
+) {
+    $step = 1;
+}
+
+// Cuando el usuario envía el paso 1, avanzamos a paso 2
+// El paso 2 solo debe mostrarse cuando el usuario presiona "Siguiente"
+// (señalado por el parámetro wizard_next desde el formulario).
+if (isset($_POST['wizard_next']) && $_POST['wizard_next'] === '1') {
+    $step = 2;
+}
+
+// Validacin paso 1 -> preparar paso 2
+if ($step === 2) {
+    if ($wizardIsBlockMode) {
+        if (!$wizardBlockChunks) {
+            $errors[] = 'Selecciona al menos un bloque valido de fechas.';
+            $step = 1;
+        } elseif (trim((string)$wizard['guest_names']) === '') {
+            $errors[] = 'Captura al menos el nombre del huesped.';
+            $step = 1;
+        } else {
+            $firstPropertyCode = strtoupper((string)$wizardBlockChunks[0]['property_code']);
+            foreach ($wizardBlockChunks as $chunk) {
+                if (strtoupper((string)$chunk['property_code']) !== $firstPropertyCode) {
+                    $errors[] = 'Todas las reservaciones en bloque deben pertenecer a la misma propiedad.';
+                    $step = 1;
+                    break;
+                }
+            }
+        }
+
+        if ($step === 2) {
+            foreach ($wizardBlockChunks as $blockIdx => $chunk) {
+                $chunkBreakdown = array();
+                if (isset($postedBlockBreakdownDates[$blockIdx]) && is_array($postedBlockBreakdownDates[$blockIdx])) {
+                    $postedDatesForBlock = (array)$postedBlockBreakdownDates[$blockIdx];
+                    $postedAmountsForBlock = isset($postedBlockBreakdownAmounts[$blockIdx]) && is_array($postedBlockBreakdownAmounts[$blockIdx])
+                        ? (array)$postedBlockBreakdownAmounts[$blockIdx]
+                        : array();
+                    foreach ($postedDatesForBlock as $rowIdx => $blockDate) {
+                        $rawAmount = isset($postedAmountsForBlock[$rowIdx]) ? (float)$postedAmountsForBlock[$rowIdx] : 0;
+                        $chunkBreakdown[] = array(
+                            'date' => (string)$blockDate,
+                            'amount' => (int)round($rawAmount * 100)
+                        );
+                    }
+                } else {
+                    try {
+                        $rows = $rwRateplanPricingService->getCalendarPricesByCodes(
+                            $chunk['property_code'],
+                            '',
+                            isset($chunk['category_code']) ? $chunk['category_code'] : '',
+                            $chunk['room_code'],
+                            $chunk['check_in'],
+                            (int)$chunk['nights']
+                        );
+                        foreach ($rows as $row) {
+                            if (!isset($row['calendar_date'])) {
+                                continue;
+                            }
+                            $chunkBreakdown[] = array(
+                                'date' => (string)$row['calendar_date'],
+                                'amount' => isset($row['final_price_cents']) ? (int)$row['final_price_cents'] : 0
+                            );
+                        }
+                    } catch (Exception $e) {
+                        $chunkBreakdown = array();
+                    }
+                    if (!$chunkBreakdown) {
+                        for ($i = 0; $i < (int)$chunk['nights']; $i++) {
+                            $d = date('Y-m-d', strtotime($chunk['check_in'] . " +{$i} day"));
+                            $chunkBreakdown[] = array('date' => $d, 'amount' => 0);
+                        }
+                    }
+                }
+                $chunkTotalCents = 0;
+                foreach ($chunkBreakdown as $chunkRow) {
+                    $chunkTotalCents += isset($chunkRow['amount']) ? (int)$chunkRow['amount'] : 0;
+                }
+                $wizardBlockChunks[$blockIdx]['breakdown'] = $chunkBreakdown;
+                $wizardBlockChunks[$blockIdx]['total_cents'] = $chunkTotalCents;
+                $wizardBlockChunks[$blockIdx]['avg_cents'] = !empty($chunkBreakdown)
+                    ? (int)round($chunkTotalCents / count($chunkBreakdown))
+                    : 0;
+            }
+            $lodgingOptions = rw_fetch_lodging_options_with_children($companyCode, $firstPropertyCode, $companyId);
+        }
+    } else {
+        if ($wizard['property_code'] === '' || $wizard['room_code'] === '' || $wizard['check_in'] === '' || $wizard['check_out'] === '') {
+            $errors[] = 'Completa propiedad, habitacion y fechas.';
+            $step = 1;
+        } elseif (trim((string)$wizard['guest_names']) === '') {
+            $errors[] = 'Captura al menos el nombre del huesped.';
+            $step = 1;
+        } else {
+            $nights = rw_nights_between($wizard['check_in'], $wizard['check_out']);
+            if ($nights <= 0) {
+                $errors[] = 'Las fechas no son vlidas.';
+                $step = 1;
+            }
+        }
+
+        // Prefill del desglose usando RateplanPricingService
+        if ($step === 2 && $nights > 0) {
+            try {
+                $rows = $rwRateplanPricingService->getCalendarPricesByCodes(
+                    $wizard['property_code'],
+                    '',
+                    $wizard['category_code'],
+                    $wizard['room_code'],
+                    $wizard['check_in'],
+                    $nights
+                );
+                foreach ($rows as $row) {
+                    if (!isset($row['calendar_date'])) continue;
+                    $amount = isset($row['final_price_cents']) ? (int)$row['final_price_cents'] : 0;
+                    $breakdown[] = array(
+                        'date' => (string)$row['calendar_date'],
+                        'amount' => $amount
+                    );
+                }
+            } catch (Exception $e) {
+                $breakdown = array();
+            }
+            if (!$breakdown) {
+                for ($i = 0; $i < $nights; $i++) {
+                    $d = date('Y-m-d', strtotime($wizard['check_in'] . " +{$i} day"));
+                    $breakdown[] = array('date' => $d, 'amount' => 0);
+                }
+            }
+
+            if ($postedBreakdownDates && $postedBreakdownAmounts) {
+                $breakdown = array();
+                foreach ($postedBreakdownDates as $idx => $d) {
+                    $amt = isset($postedBreakdownAmounts[$idx]) ? (float)$postedBreakdownAmounts[$idx] : 0;
+                    $breakdown[] = array(
+                        'date' => (string)$d,
+                        'amount' => (int)round($amt * 100)
+                    );
+                }
+            } elseif ($replaceLodgingMode && $replaceLodgingHasCurrentPrice && $breakdown) {
+                $parts = count($breakdown);
+                if ($parts <= 0) {
+                    $parts = $nights > 0 ? $nights : 1;
+                }
+                $baseCents = (int)floor($replaceLodgingCurrentTotalCents / max(1, $parts));
+                $remainderCents = (int)($replaceLodgingCurrentTotalCents - ($baseCents * $parts));
+                foreach ($breakdown as $idx => $row) {
+                    $breakdown[$idx]['amount'] = $baseCents + ($idx < $remainderCents ? 1 : 0);
+                }
+            }
+
+            // Poblar conceptos de hospedaje permitidos
+            $lodgingOptions = rw_fetch_lodging_options_with_children($companyCode, $wizard['property_code'], $companyId);
+        }
+    }
+}// Crear reserva (paso final)
+
+if ($createNow) {
+    if ($wizard['property_code'] === '' || $wizard['room_code'] === '' || $wizard['check_in'] === '' || $wizard['check_out'] === '') {
+        $errors[] = 'Completa propiedad, habitacion y fechas.';
+    } else {
+        try {
+            $dtIn  = new DateTime($wizard['check_in']);
+            $dtOut = new DateTime($wizard['check_out']);
+            $diff  = (int)$dtIn->diff($dtOut)->format('%r%a');
+            $nights = $diff > 0 ? $diff : 0;
+        } catch (Exception $e) {
+            $nights = 0;
+        }
+        if ($nights <= 0) {
+            $errors[] = 'Las fechas no son validas.';
+        }
+    }
+
+    if (!$errors) {
+        $guestPhoneCombined = trim($wizard['guest_phone']);
+        if ($guestPhoneCombined !== '' && substr($guestPhoneCombined, 0, 1) !== '+') {
+            $guestPhoneCombined = trim($wizard['guest_prefix'] . ' ' . $guestPhoneCombined);
+        }
+
+        if ($editingReservationId > 0) {
+            if ($editingReservationStatus !== '' && !in_array($editingReservationStatus, array('apartado', 'pendiente', 'pending', 'hold'), true)) {
+                $errors[] = 'Solo puedes confirmar reservas en estatus apartado.';
+            } else {
+                try {
+                    $guestIdValue = $wizard['guest_id'] > 0 ? $wizard['guest_id'] : ($editingGuestId > 0 ? $editingGuestId : 0);
+                    if ($guestIdValue <= 0) {
+                        $selectedGuestId = (int)rw_input('wizard_selected_guest_id', 0);
+                        if ($selectedGuestId > 0) {
+                            $guestIdValue = $selectedGuestId;
+                        }
+                    }
+                    $didUpsertGuest = false;
+                    $guestPayload = trim($wizard['guest_email']) !== ''
+                        || trim($wizard['guest_names']) !== ''
+                        || trim($wizard['guest_last']) !== ''
+                        || trim($wizard['guest_maiden']) !== ''
+                        || $guestPhoneCombined !== '';
+                    if ($guestIdValue <= 0 && $guestPayload) {
+                        $guestIdValue = wizard_find_guest_id(
+                            $companyCode,
+                            $actorUserId,
+                            $wizard['guest_email'],
+                            $guestPhoneCombined,
+                            $wizard['guest_names'],
+                            $wizard['guest_last'],
+                            $wizard['guest_maiden']
+                        );
+                    }
+                    if ($guestIdValue <= 0 && $guestPayload) {
+                        if (trim($wizard['guest_email']) !== '' && !preg_match('/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$/', $wizard['guest_email'])) {
+                            throw new Exception('Correo de huesped invalido.');
+                        }
+                        $guestSets = pms_call_procedure('sp_guest_upsert', array(
+                            trim($wizard['guest_email']) !== '' ? $wizard['guest_email'] : null,
+                            $wizard['guest_names'],
+                            $wizard['guest_last'] === '' ? null : $wizard['guest_last'],
+                            $wizard['guest_maiden'] === '' ? null : $wizard['guest_maiden'],
+                            $guestPhoneCombined === '' ? null : $guestPhoneCombined,
+                            null,
+                            0,
+                            0,
+                            null
+                        ));
+                        $guestRow = isset($guestSets[0][0]) ? $guestSets[0][0] : null;
+                        $guestIdValue = $guestRow && isset($guestRow['id_guest']) ? (int)$guestRow['id_guest'] : 0;
+                        if ($guestIdValue <= 0) {
+                            throw new Exception('No se pudo registrar el huesped.');
+                        }
+                        $didUpsertGuest = true;
+                    }
+
+                    if ($guestIdValue > 0) {
+                        $pdo = pms_get_connection();
+                        $stmt = $pdo->prepare('UPDATE reservation SET id_guest = ?, updated_at = NOW() WHERE id_reservation = ?');
+                        $stmt->execute(array($guestIdValue, $editingReservationId));
+                    }
+                    if ($wizard['code'] !== '') {
+                        $pdo = isset($pdo) ? $pdo : pms_get_connection();
+                        $stmt = $pdo->prepare('UPDATE reservation SET code = ? WHERE id_reservation = ?');
+                        $stmt->execute(array($wizard['code'], $editingReservationId));
+                    }
+                    pms_call_procedure('sp_reservation_update', array(
+                        $companyCode,
+                        $editingReservationId,
+                        'confirmado',
+                        $wizardSourceInput,
+                        $wizardOtaAccountId,
+                        $wizard['room_code'] === '' ? null : $wizard['room_code'],
+                        $wizard['check_in'] === '' ? null : $wizard['check_in'],
+                        $wizard['check_out'] === '' ? null : $wizard['check_out'],
+                        $wizard['adults'],
+                        $wizard['children'],
+                        null,
+                        null,
+                        $actorUserId
+                    ));
+                    if (trim($wizard['notes_internal']) !== '') {
+                        pms_call_procedure('sp_reservation_note_upsert', array(
+                            'create',
+                            0,
+                            $editingReservationId,
+                            'internal',
+                            $wizard['notes_internal'],
+                            1,
+                            $companyCode,
+                            $actorUserId
+                        ));
+                    }
+                    $messages[] = 'Reserva confirmada correctamente.';
+                    rw_set_calendar_focus(
+                        $calendarFocusReservationId,
+                        $calendarFocusPropertyCode,
+                        $calendarFocusRoomCode,
+                        $calendarFocusCheckIn,
+                        $editingReservationId,
+                        $wizard['property_code'],
+                        $wizard['room_code'],
+                        $wizard['check_in']
+                    );
+                    $redirectToCalendar = true;
+                    $step = 1;
+                } catch (Exception $e) {
+                    $errors[] = 'Error al confirmar la reserva: ' . $e->getMessage();
+                }
+            }
+        } else {
+            try {
+                $guestIdValue = $wizard['guest_id'] > 0 ? $wizard['guest_id'] : 0;
+                if ($guestIdValue <= 0) {
+                    $selectedGuestId = (int)rw_input('wizard_selected_guest_id', 0);
+                    if ($selectedGuestId > 0) {
+                        $guestIdValue = $selectedGuestId;
+                    }
+                }
+                $didUpsertGuest = false;
+                $guestPayload = trim($wizard['guest_email']) !== ''
+                    || trim($wizard['guest_names']) !== ''
+                    || trim($wizard['guest_last']) !== ''
+                    || trim($wizard['guest_maiden']) !== ''
+                    || $guestPhoneCombined !== '';
+                if ($guestIdValue <= 0 && $guestPayload) {
+                    $guestIdValue = wizard_find_guest_id(
+                        $companyCode,
+                        $actorUserId,
+                        $wizard['guest_email'],
+                        $guestPhoneCombined,
+                        $wizard['guest_names'],
+                        $wizard['guest_last'],
+                        $wizard['guest_maiden']
+                    );
+                }
+                if ($guestIdValue <= 0 && $guestPayload) {
+                    if (trim($wizard['guest_email']) !== '' && !preg_match('/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$/', $wizard['guest_email'])) {
+                        throw new Exception('Correo de huesped invalido.');
+                    }
+                    $guestSets = pms_call_procedure('sp_guest_upsert', array(
+                        trim($wizard['guest_email']) !== '' ? $wizard['guest_email'] : null,
+                        $wizard['guest_names'],
+                        $wizard['guest_last'] === '' ? null : $wizard['guest_last'],
+                        $wizard['guest_maiden'] === '' ? null : $wizard['guest_maiden'],
+                        $guestPhoneCombined === '' ? null : $guestPhoneCombined,
+                        null,
+                        0,
+                        0,
+                        null
+                    ));
+                    $guestRow = isset($guestSets[0][0]) ? $guestSets[0][0] : null;
+                    $guestIdValue = $guestRow && isset($guestRow['id_guest']) ? (int)$guestRow['id_guest'] : 0;
+                    if ($guestIdValue <= 0) {
+                        throw new Exception('No se pudo registrar el huesped.');
+                    }
+                    $didUpsertGuest = true;
+                }
+
+                $resultSets = pms_call_create_reservation_hold(
+                    $wizard['property_code'],
+                    $wizard['room_code'],
+                    $wizard['check_in'],
+                    $wizard['check_out'],
+                    0,
+                    null,
+                    $actorUserId
+                );
+                $resultRow = isset($resultSets[0][0]) ? $resultSets[0][0] : null;
+                if ($resultRow && isset($resultRow['status']) && strtoupper((string)$resultRow['status']) === 'ERROR') {
+                    $errors[] = 'Error al crear la reserva: ' . (isset($resultRow['message']) ? $resultRow['message'] : 'Sin detalle.');
+                } else {
+                    $newReservationId = $resultRow && isset($resultRow['id_reservation']) ? (int)$resultRow['id_reservation'] : 0;
+                    if ($newReservationId <= 0) {
+                        throw new Exception('No se pudo crear la reservacion.');
+                    }
+                    if ($guestIdValue > 0) {
+                        $pdo = pms_get_connection();
+                        $stmt = $pdo->prepare('UPDATE reservation SET id_guest = ?, updated_at = NOW() WHERE id_reservation = ?');
+                        $stmt->execute(array($guestIdValue, $newReservationId));
+                    }
+                    if ($wizard['code'] !== '') {
+                        $pdo = isset($pdo) ? $pdo : pms_get_connection();
+                        $stmt = $pdo->prepare('UPDATE reservation SET code = ? WHERE id_reservation = ?');
+                        $stmt->execute(array($wizard['code'], $newReservationId));
+                    }
+
+                    pms_call_procedure('sp_reservation_update', array(
+                        $companyCode,
+                        $newReservationId,
+                        null,
+                        $wizardSourceInput,
+                        $wizardOtaAccountId,
+                        $wizard['room_code'] === '' ? null : $wizard['room_code'],
+                        $wizard['check_in'] === '' ? null : $wizard['check_in'],
+                        $wizard['check_out'] === '' ? null : $wizard['check_out'],
+                        $wizard['adults'],
+                        $wizard['children'],
+                        null,
+                        null,
+                        $actorUserId
+                    ));
+                    if ($newReservationId > 0 && trim($wizard['notes_internal']) !== '') {
+                        pms_call_procedure('sp_reservation_note_upsert', array(
+                            'create',
+                            0,
+                            $newReservationId,
+                            'internal',
+                            $wizard['notes_internal'],
+                            1,
+                            $companyCode,
+                            $actorUserId
+                        ));
+                    }
+                    $messages[] = 'Reserva creada correctamente.';
+                    rw_set_calendar_focus(
+                        $calendarFocusReservationId,
+                        $calendarFocusPropertyCode,
+                        $calendarFocusRoomCode,
+                        $calendarFocusCheckIn,
+                        $newReservationId,
+                        $wizard['property_code'],
+                        $wizard['room_code'],
+                        $wizard['check_in']
+                    );
+                    $redirectToCalendar = true;
+                    $step = 1;
+                }
+            } catch (Exception $e) {
+                $errors[] = 'Error al crear la reserva: ' . $e->getMessage();
+            }
+        }
+    }
+}
+
+// Crear reserva (paso final)
+if ($step === 3 && isset($_POST['wizard_confirm']) && $_POST['wizard_confirm'] === '1') {
+    // leer desglose posteado
+    $postedDates = isset($_POST['breakdown_date']) ? (array)$_POST['breakdown_date'] : array();
+    $postedAmounts = isset($_POST['breakdown_amount']) ? (array)$_POST['breakdown_amount'] : array();
+    $sumCents = 0;
+    $count = 0;
+    $breakdown = array();
+    foreach ($postedDates as $idx => $d) {
+        $amt = isset($postedAmounts[$idx]) ? (float)$postedAmounts[$idx] : 0;
+        $amtC = (int)round($amt * 100);
+        $sumCents += $amtC;
+        $count++;
+        $breakdown[] = array(
+            'date' => $d,
+            'amount' => $amtC
+        );
+    }
+    $avgCents = ($count > 0) ? (int)round($sumCents / $count) : 0;
+
+    // guest phone combine
+    $guestPhoneCombined = trim($wizard['guest_phone']);
+    if ($guestPhoneCombined !== '' && substr($guestPhoneCombined, 0, 1) !== '+') {
+        $guestPhoneCombined = trim($wizard['guest_prefix'] . ' ' . $guestPhoneCombined);
+    }
+
+    try {
+        if ($wizardIsBlockMode) {
+            $lodgingConceptId = isset($_POST['wizard_lodging_concept']) ? (int)$_POST['wizard_lodging_concept'] : 0;
+            if ($lodgingConceptId <= 0) {
+                throw new Exception('Selecciona un concepto de hospedaje.');
+            }
+            if (!$wizardBlockChunks) {
+                throw new Exception('No hay bloques validos para crear reservaciones.');
+            }
+
+            $guestIdValue = $wizard['guest_id'] > 0 ? $wizard['guest_id'] : 0;
+            if ($guestIdValue <= 0) {
+                $selectedGuestId = (int)rw_input('wizard_selected_guest_id', 0);
+                if ($selectedGuestId > 0) {
+                    $guestIdValue = $selectedGuestId;
+                }
+            }
+            if ($guestIdValue <= 0) {
+                $guestIdValue = wizard_find_guest_id(
+                    $companyCode,
+                    $actorUserId,
+                    $wizard['guest_email'],
+                    $guestPhoneCombined,
+                    $wizard['guest_names'],
+                    $wizard['guest_last'],
+                    $wizard['guest_maiden']
+                );
+            }
+            if ($guestIdValue <= 0) {
+                if (trim($wizard['guest_email']) !== '' && !preg_match('/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$/', $wizard['guest_email'])) {
+                    throw new Exception('Correo de huesped invalido.');
+                }
+                $guestSets = pms_call_procedure('sp_guest_upsert', array(
+                    trim($wizard['guest_email']) !== '' ? $wizard['guest_email'] : null,
+                    $wizard['guest_names'],
+                    $wizard['guest_last'] === '' ? null : $wizard['guest_last'],
+                    $wizard['guest_maiden'] === '' ? null : $wizard['guest_maiden'],
+                    $guestPhoneCombined === '' ? null : $guestPhoneCombined,
+                    null,
+                    0,
+                    0,
+                    null
+                ));
+                $guestRow = isset($guestSets[0][0]) ? $guestSets[0][0] : null;
+                $guestIdValue = $guestRow && isset($guestRow['id_guest']) ? (int)$guestRow['id_guest'] : 0;
+                if ($guestIdValue <= 0) {
+                    throw new Exception('No se pudo registrar el huesped.');
+                }
+            }
+
+            $createdReservations = array();
+            foreach ($wizardBlockChunks as $blockIdx => $chunk) {
+                $postedDatesForBlock = isset($postedBlockBreakdownDates[$blockIdx]) && is_array($postedBlockBreakdownDates[$blockIdx])
+                    ? (array)$postedBlockBreakdownDates[$blockIdx]
+                    : array();
+                $postedAmountsForBlock = isset($postedBlockBreakdownAmounts[$blockIdx]) && is_array($postedBlockBreakdownAmounts[$blockIdx])
+                    ? (array)$postedBlockBreakdownAmounts[$blockIdx]
+                    : array();
+                $totalOverrideCents = 0;
+                foreach ($postedDatesForBlock as $rowIdx => $blockDate) {
+                    $rawAmount = isset($postedAmountsForBlock[$rowIdx]) ? (float)$postedAmountsForBlock[$rowIdx] : 0;
+                    $totalOverrideCents += (int)round($rawAmount * 100);
+                }
+
+                $resultSets = pms_call_procedure('sp_create_reservation', array(
+                    $chunk['property_code'],
+                    $chunk['room_code'],
+                    $chunk['check_in'],
+                    $chunk['check_out'],
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    $wizard['adults'],
+                    $wizard['children'],
+                    $lodgingConceptId,
+                    max(0, $totalOverrideCents),
+                    null,
+                    null,
+                    $wizardSourceInput,
+                    $wizardOtaAccountId,
+                    $actorUserId
+                ));
+                $resultRow = isset($resultSets[0][0]) ? $resultSets[0][0] : null;
+                $newReservationId = 0;
+                if (!empty($resultSets) && is_array($resultSets)) {
+                    foreach ($resultSets as $set) {
+                        if (!is_array($set) || empty($set)) {
+                            continue;
+                        }
+                        foreach ($set as $row) {
+                            if (!is_array($row)) {
+                                continue;
+                            }
+                            if (isset($row['id_reservation']) && (int)$row['id_reservation'] > 0) {
+                                $newReservationId = (int)$row['id_reservation'];
+                                $resultRow = $row;
+                                break 2;
+                            }
+                        }
+                    }
+                }
+                if ($resultRow && isset($resultRow['status']) && strtoupper((string)$resultRow['status']) === 'ERROR') {
+                    throw new Exception(isset($resultRow['message']) ? $resultRow['message'] : 'Sin detalle.');
+                }
+                if ($newReservationId <= 0 && $resultRow && isset($resultRow['id_reservation'])) {
+                    $newReservationId = (int)$resultRow['id_reservation'];
+                }
+                if ($newReservationId <= 0) {
+                    throw new Exception('No se pudo obtener el id de una reservacion creada.');
+                }
+
+                $pdo = isset($pdo) ? $pdo : pms_get_connection();
+                $stmt = $pdo->prepare('UPDATE reservation SET id_guest = ?, updated_at = NOW() WHERE id_reservation = ?');
+                $stmt->execute(array($guestIdValue, $newReservationId));
+
+                if (trim($wizard['notes_internal']) !== '') {
+                    pms_call_procedure('sp_reservation_note_upsert', array(
+                        'create',
+                        0,
+                        $newReservationId,
+                        'internal',
+                        $wizard['notes_internal'],
+                        1,
+                        $companyCode,
+                        $actorUserId
+                    ));
+                }
+
+                $createdReservations[] = array(
+                    'id_reservation' => $newReservationId,
+                    'property_code' => $chunk['property_code'],
+                    'room_code' => $chunk['room_code'],
+                    'check_in' => $chunk['check_in']
+                );
+            }
+
+            if (!$createdReservations) {
+                throw new Exception('No se pudo crear ninguna reservacion en bloque.');
+            }
+
+            $messages[] = count($createdReservations) === 1
+                ? 'Se creo 1 reservacion en bloque.'
+                : ('Se crearon ' . count($createdReservations) . ' reservaciones en bloque.');
+            $firstCreatedReservation = $createdReservations[0];
+            $step = 1;
+            rw_set_calendar_focus(
+                $calendarFocusReservationId,
+                $calendarFocusPropertyCode,
+                $calendarFocusRoomCode,
+                $calendarFocusCheckIn,
+                (int)$firstCreatedReservation['id_reservation'],
+                (string)$firstCreatedReservation['property_code'],
+                (string)$firstCreatedReservation['room_code'],
+                (string)$firstCreatedReservation['check_in']
+            );
+            $redirectToCalendar = true;
+        } else {
+        $mainChildCatalogIdsRaw = isset($_POST['wizard_child_catalog_id']) ? $_POST['wizard_child_catalog_id'] : array();
+        $mainChildParentCatalogIdsRaw = isset($_POST['wizard_child_parent_catalog_id']) ? $_POST['wizard_child_parent_catalog_id'] : array();
+        $mainChildTotalsRaw = isset($_POST['wizard_child_total']) ? $_POST['wizard_child_total'] : array();
+        if (!is_array($mainChildCatalogIdsRaw)) $mainChildCatalogIdsRaw = array($mainChildCatalogIdsRaw);
+        if (!is_array($mainChildParentCatalogIdsRaw)) $mainChildParentCatalogIdsRaw = array($mainChildParentCatalogIdsRaw);
+        if (!is_array($mainChildTotalsRaw)) $mainChildTotalsRaw = array($mainChildTotalsRaw);
+        $mainChildSpecs = array();
+        foreach ($mainChildCatalogIdsRaw as $childIdx => $childCatalogRaw) {
+            $childCatalogId = (int)$childCatalogRaw;
+            if ($childCatalogId <= 0) continue;
+            $childParentCatalogId = isset($mainChildParentCatalogIdsRaw[$childIdx]) ? (int)$mainChildParentCatalogIdsRaw[$childIdx] : 0;
+            $childTotalRaw = isset($mainChildTotalsRaw[$childIdx]) ? trim((string)$mainChildTotalsRaw[$childIdx]) : '';
+            $childTotalRaw = str_replace(',', '.', $childTotalRaw);
+            $childTotalCents = $childTotalRaw !== '' ? (int)round(((float)$childTotalRaw) * 100) : 0;
+            $mainChildSpecs[] = array(
+                'catalog_id' => $childCatalogId,
+                'parent_catalog_id' => $childParentCatalogId,
+                'total_cents' => $childTotalCents
+            );
+        }
+        // Compatibilidad con SP actual: solo admite un derivado explícito.
+        $childCatalogId = 0;
+        $childAmountCents = 0;
+        $childTotalCents = 0;
+        if (!empty($mainChildSpecs)) {
+            $firstMainChild = $mainChildSpecs[0];
+            $childCatalogId = isset($firstMainChild['catalog_id']) ? (int)$firstMainChild['catalog_id'] : 0;
+            $childAmountCents = isset($firstMainChild['total_cents']) ? (int)$firstMainChild['total_cents'] : 0;
+            $childTotalCents = isset($firstMainChild['total_cents']) ? (int)$firstMainChild['total_cents'] : 0;
+        }
+        // El total override del concepto principal no debe incluir derivados no porcentuales.
+        // Esos se crean por separado en rw_apply_main_child_totals / rw_upsert_fixed_children_tree.
+        $totalOverrideCents = max(0, $sumCents);
+
+        $lodgingConceptId = isset($_POST['wizard_lodging_concept']) ? (int)$_POST['wizard_lodging_concept'] : 0;
+        $extraLodgingConceptSpecs = array();
+        $extraConceptSeen = array();
+        $extraTotalsRaw = isset($_POST['wizard_lodging_total_extra']) && is_array($_POST['wizard_lodging_total_extra'])
+            ? (array)$_POST['wizard_lodging_total_extra']
+            : array();
+        $extraChildrenJsonRaw = isset($_POST['wizard_lodging_children_json_extra']) && is_array($_POST['wizard_lodging_children_json_extra'])
+            ? (array)$_POST['wizard_lodging_children_json_extra']
+            : array();
+        $extraChildTotalsRaw = isset($_POST['wizard_lodging_child_total_extra']) && is_array($_POST['wizard_lodging_child_total_extra'])
+            ? (array)$_POST['wizard_lodging_child_total_extra']
+            : array();
+        if (isset($_POST['wizard_lodging_concept_extra']) && is_array($_POST['wizard_lodging_concept_extra'])) {
+            foreach ((array)$_POST['wizard_lodging_concept_extra'] as $extraIdx => $extraConceptRaw) {
+                $extraConceptId = (int)$extraConceptRaw;
+                if ($extraConceptId <= 0 || $extraConceptId === $lodgingConceptId) {
+                    continue;
+                }
+                $extraTotalVal = isset($extraTotalsRaw[$extraIdx]) ? (string)$extraTotalsRaw[$extraIdx] : '';
+                $extraTotalVal = str_replace(',', '.', trim($extraTotalVal));
+                $extraTotalCents = $extraTotalVal !== '' ? (int)round(((float)$extraTotalVal) * 100) : 0;
+                $extraChildrenSpecs = array();
+                $extraChildrenJson = isset($extraChildrenJsonRaw[$extraIdx]) ? (string)$extraChildrenJsonRaw[$extraIdx] : '';
+                if ($extraChildrenJson !== '') {
+                    $decodedChildren = json_decode($extraChildrenJson, true);
+                    if (is_array($decodedChildren)) {
+                        foreach ($decodedChildren as $childSpec) {
+                            if (!is_array($childSpec)) continue;
+                            $childCatalogId = isset($childSpec['catalog_id']) ? (int)$childSpec['catalog_id'] : 0;
+                            if ($childCatalogId <= 0) continue;
+                            $childTotalCents = isset($childSpec['total_cents']) ? (int)$childSpec['total_cents'] : 0;
+                            if ($childTotalCents <= 0) continue;
+                            $extraChildrenSpecs[] = array(
+                                'catalog_id' => $childCatalogId,
+                                'parent_catalog_id' => isset($childSpec['parent_catalog_id']) ? (int)$childSpec['parent_catalog_id'] : 0,
+                                'total_cents' => $childTotalCents > 0 ? $childTotalCents : 0
+                            );
+                        }
+                    }
+                }
+                // Compatibilidad con payload anterior (solo un derivado).
+                if (!$extraChildrenSpecs) {
+                    $extraChildTotalVal = isset($extraChildTotalsRaw[$extraIdx]) ? (string)$extraChildTotalsRaw[$extraIdx] : '';
+                    $extraChildTotalVal = str_replace(',', '.', trim($extraChildTotalVal));
+                    $extraChildTotalCents = $extraChildTotalVal !== '' ? (int)round(((float)$extraChildTotalVal) * 100) : 0;
+                    if ($extraChildTotalCents > 0) {
+                        $extraChildrenSpecs[] = array(
+                            'catalog_id' => 0,
+                            'total_cents' => $extraChildTotalCents > 0 ? $extraChildTotalCents : 0
+                        );
+                    }
+                }
+                if (isset($extraConceptSeen[$extraConceptId])) {
+                    continue;
+                }
+                $extraConceptSeen[$extraConceptId] = true;
+                $legacyFirstChild = !empty($extraChildrenSpecs) ? $extraChildrenSpecs[0] : array();
+                $extraLodgingConceptSpecs[] = array(
+                    'concept_id' => $extraConceptId,
+                    'total_cents' => $extraTotalCents > 0 ? $extraTotalCents : 0,
+                    'child_total_cents' => isset($legacyFirstChild['total_cents']) ? (int)$legacyFirstChild['total_cents'] : 0,
+                    'children' => $extraChildrenSpecs
+                );
+            }
+        }
+        $lodgingOptionsForProperty = rw_fetch_lodging_options_with_children($companyCode, $wizard['property_code'], $companyId);
+        $lodgingOptionsMap = array();
+        foreach ($lodgingOptionsForProperty as $opt) {
+            $optId = isset($opt['id']) ? (int)$opt['id'] : 0;
+            if ($optId > 0) {
+                $lodgingOptionsMap[$optId] = $opt;
+            }
+        }
+        $fixedChildrenByParentForSave = rw_fetch_fixed_children_by_parent($companyCode, $wizard['property_code'], $companyId);
+
+        if ($editingReservationId > 0) {
+            if ($lodgingConceptId <= 0 && $totalOverrideCents > 0) {
+                throw new Exception('Selecciona un concepto de hospedaje.');
+            }
+            $guestIdValue = $wizard['guest_id'] > 0 ? $wizard['guest_id'] : ($editingGuestId > 0 ? $editingGuestId : 0);
+            if ($guestIdValue <= 0) {
+                $selectedGuestId = (int)rw_input('wizard_selected_guest_id', 0);
+                if ($selectedGuestId > 0) {
+                    $guestIdValue = $selectedGuestId;
+                }
+            }
+            $didUpsertGuest = false;
+            $guestPayload = trim($wizard['guest_email']) !== ''
+                || trim($wizard['guest_names']) !== ''
+                || trim($wizard['guest_last']) !== ''
+                || trim($wizard['guest_maiden']) !== ''
+                || $guestPhoneCombined !== '';
+            if ($guestIdValue <= 0 && $guestPayload) {
+              $guestIdValue = wizard_find_guest_id(
+                $companyCode,
+                $actorUserId,
+                $wizard['guest_email'],
+                $guestPhoneCombined,
+                $wizard['guest_names'],
+                $wizard['guest_last'],
+                $wizard['guest_maiden']
+              );
+            }
+            if ($guestIdValue <= 0 && $guestPayload) {
+                if (trim($wizard['guest_email']) !== '' && !preg_match('/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$/', $wizard['guest_email'])) {
+                    throw new Exception('Correo de huesped invalido.');
+                }
+                $guestSets = pms_call_procedure('sp_guest_upsert', array(
+                    trim($wizard['guest_email']) !== '' ? $wizard['guest_email'] : null,
+                    $wizard['guest_names'],
+                    $wizard['guest_last'] === '' ? null : $wizard['guest_last'],
+                    $wizard['guest_maiden'] === '' ? null : $wizard['guest_maiden'],
+                    $guestPhoneCombined === '' ? null : $guestPhoneCombined,
+                    null,
+                    0,
+                    0,
+                    null
+                ));
+                $guestRow = isset($guestSets[0][0]) ? $guestSets[0][0] : null;
+                $guestIdValue = $guestRow && isset($guestRow['id_guest']) ? (int)$guestRow['id_guest'] : 0;
+                if ($guestIdValue <= 0) {
+                    throw new Exception('No se pudo registrar el huesped.');
+                }
+                $didUpsertGuest = true;
+            }
+            if ($guestIdValue <= 0) {
+                throw new Exception('Necesitas un huesped para agregar cargos.');
+            }
+
+            pms_call_procedure('sp_reservation_update', array(
+                $companyCode,
+                $editingReservationId,
+                null,
+                $wizardSourceInput,
+                $wizardOtaAccountId,
+                $wizard['room_code'] === '' ? null : $wizard['room_code'],
+                $wizard['check_in'] === '' ? null : $wizard['check_in'],
+                $wizard['check_out'] === '' ? null : $wizard['check_out'],
+                $wizard['adults'],
+                $wizard['children'],
+                null,
+                null,
+                $actorUserId
+            ));
+            if (trim($wizard['notes_internal']) !== '') {
+                pms_call_procedure('sp_reservation_note_upsert', array(
+                    'create',
+                    0,
+                    $editingReservationId,
+                    'internal',
+                    $wizard['notes_internal'],
+                    1,
+                    $companyCode,
+                    $actorUserId
+                ));
+            }
+            if ($guestIdValue > 0) {
+                $pdo = pms_get_connection();
+                $stmt = $pdo->prepare('UPDATE reservation SET id_guest = ?, updated_at = NOW() WHERE id_reservation = ?');
+                $stmt->execute(array($guestIdValue, $editingReservationId));
+            }
+	            if ($wizard['code'] !== '') {
+	                $pdo = isset($pdo) ? $pdo : pms_get_connection();
+	                $stmt = $pdo->prepare('UPDATE reservation SET code = ? WHERE id_reservation = ?');
+	                $stmt->execute(array($wizard['code'], $editingReservationId));
+	            }
+	            if ($replaceLodgingMode && !in_array($editingReservationStatus, array('confirmado', 'en casa', 'encasa', 'apartado', 'pendiente', 'pending', 'hold'), true)) {
+	                throw new Exception('Cambiar tipo de hospedaje solo esta disponible para reservaciones confirmadas o en casa.');
+	            }
+	
+	            if (in_array($editingReservationStatus, array('apartado', 'pendiente', 'pending', 'hold'), true)) {
+                pms_call_procedure('sp_reservation_confirm_hold', array(
+                    $companyCode,
+                    $editingReservationId,
+                    $guestIdValue,
+                    $lodgingConceptId,
+                    $totalOverrideCents,
+                    $wizard['adults'],
+                    $wizard['children'],
+                    $actorUserId
+                ));
+                if ($mainChildSpecs) {
+                    $folioId = rw_get_latest_folio_id($editingReservationId);
+                    if ($folioId > 0) {
+                        rw_apply_main_child_totals(
+                            $editingReservationId,
+                            $folioId,
+                            $lodgingConceptId,
+                            $mainChildSpecs,
+                            $wizard['check_in'],
+                            $actorUserId,
+                            $fixedChildrenByParentForSave
+                        );
+                    }
+                }
+                if ($extraLodgingConceptSpecs) {
+                    $folioId = rw_get_latest_folio_id($editingReservationId);
+                    if ($folioId > 0) {
+                        rw_attach_lodging_concepts_to_folio(
+                            $editingReservationId,
+                            $folioId,
+                            $extraLodgingConceptSpecs,
+                            $lodgingOptionsMap,
+                            $wizard['check_in'],
+                            $count,
+                            $actorUserId,
+                            $fixedChildrenByParentForSave
+                        );
+                    }
+                }
+                $paymentResult = wizard_apply_payments($editingReservationId, $actorUserId, $wizard['property_code']);
+                $paymentFailed = false;
+                if (isset($paymentResult['attempted'], $paymentResult['created']) && (int)$paymentResult['attempted'] > 0 && (int)$paymentResult['created'] === 0) {
+                    $errors[] = 'No se pudo registrar ningun pago inicial.';
+                    if (!empty($paymentResult['errors'])) {
+                        $cleanPaymentErrors = array_map('rw_normalize_error_message', array_unique($paymentResult['errors']));
+                        $errors[] = 'Detalle pagos: ' . implode(' | ', $cleanPaymentErrors);
+                    }
+                    $paymentFailed = true;
+                }
+                if (!$paymentFailed) {
+                    $createdPaymentCents = isset($paymentResult['created_amount_cents']) ? (int)$paymentResult['created_amount_cents'] : 0;
+                    if ($createdPaymentCents > 0) {
+                        $messages[] = 'Pago registrado por $' . number_format($createdPaymentCents / 100, 2, '.', ',') . ' MXN.';
+                    }
+                    $messages[] = 'Reserva confirmada correctamente.';
+                    $step = 1;
+                    rw_set_calendar_focus(
+                        $calendarFocusReservationId,
+                        $calendarFocusPropertyCode,
+                        $calendarFocusRoomCode,
+                        $calendarFocusCheckIn,
+                        $editingReservationId,
+                        $wizard['property_code'],
+                        $wizard['room_code'],
+                        $wizard['check_in']
+                    );
+                    $redirectToCalendar = true;
+                } else {
+                    $step = 3;
+                }
+	            } elseif (in_array($editingReservationStatus, array('confirmado', 'en casa', 'encasa'), true)) {
+	                if ($replaceLodgingMode) {
+	                    $targetFolioId = $replaceLodgingFolioId > 0 ? (int)$replaceLodgingFolioId : 0;
+	                    if ($targetFolioId > 0) {
+	                        $pdo = isset($pdo) ? $pdo : pms_get_connection();
+	                        $stmtFolio = $pdo->prepare('SELECT id_folio FROM folio WHERE id_folio = ? AND id_reservation = ? AND deleted_at IS NULL LIMIT 1');
+	                        $stmtFolio->execute(array($targetFolioId, $editingReservationId));
+	                        if ((int)$stmtFolio->fetchColumn() <= 0) {
+	                            throw new Exception('El folio seleccionado para cambiar hospedaje no pertenece a la reservacion.');
+	                        }
+	                    }
+	                    $primaryLodging = rw_find_primary_lodging_line_item($companyId, $editingReservationId);
+	                    if ($targetFolioId <= 0 && isset($primaryLodging['id_folio'])) {
+	                        $targetFolioId = (int)$primaryLodging['id_folio'];
+	                    }
+	                    if ($targetFolioId <= 0) {
+	                        $targetFolioId = rw_find_or_create_lodging_folio_id($editingReservationId, $actorUserId);
+	                    }
+	                    if ($targetFolioId <= 0) {
+	                        throw new Exception('No se encontro un folio activo para aplicar el cambio de hospedaje.');
+	                    }
+	                    $lodgingItemsToReplace = rw_find_lodging_line_items($companyId, $editingReservationId, $targetFolioId);
+	                    if (!$lodgingItemsToReplace) {
+	                        $fallbackLodgingFolioId = rw_find_or_create_lodging_folio_id($editingReservationId, $actorUserId);
+	                        if ($fallbackLodgingFolioId > 0) {
+	                            $targetFolioId = $fallbackLodgingFolioId;
+	                            $lodgingItemsToReplace = rw_find_lodging_line_items($companyId, $editingReservationId, $targetFolioId);
+	                        }
+	                    }
+	                    $deletedRoots = array();
+	                    foreach ($lodgingItemsToReplace as $lodgingItemToReplace) {
+	                        $oldLineItemId = isset($lodgingItemToReplace['id_line_item']) ? (int)$lodgingItemToReplace['id_line_item'] : 0;
+	                        if ($oldLineItemId <= 0 || isset($deletedRoots[$oldLineItemId])) {
+	                            continue;
+	                        }
+	                        rw_delete_line_item_tree($editingReservationId, $oldLineItemId, $actorUserId);
+	                        $deletedRoots[$oldLineItemId] = true;
+	                    }
+	                    $serviceDateFromCurrentLodging = '';
+	                    if (!empty($lodgingItemsToReplace[0]) && isset($lodgingItemsToReplace[0]['service_date'])) {
+	                        $serviceDateFromCurrentLodging = trim((string)$lodgingItemsToReplace[0]['service_date']);
+	                    }
+	                    $serviceDateForLodging = trim((string)$wizard['check_in']) !== ''
+	                        ? (string)$wizard['check_in']
+	                        : ($serviceDateFromCurrentLodging !== ''
+	                            ? $serviceDateFromCurrentLodging
+	                            : date('Y-m-d'));
+	                    $lineQty = $count > 0 ? $count : 1;
+	                    $newUnitCents = null;
+	                    if ($totalOverrideCents !== null && $totalOverrideCents > 0) {
+	                        $newUnitCents = (int)round($totalOverrideCents / max(1, $lineQty));
+	                    } elseif (isset($lodgingOptionsMap[$lodgingConceptId]['default_unit_price_cents'])) {
+	                        $newUnitCents = (int)$lodgingOptionsMap[$lodgingConceptId]['default_unit_price_cents'];
+	                    }
+	                    if ($newUnitCents === null) {
+	                        $newUnitCents = 0;
+	                    }
+	                    pms_call_procedure('sp_sale_item_upsert', array(
+	                        'create',
+	                        0,
+	                        $targetFolioId,
+	                        $editingReservationId,
+	                        $lodgingConceptId,
+	                        null,
+	                        $serviceDateForLodging,
+	                        $lineQty,
+	                        $newUnitCents,
+	                        null,
+	                        'posted',
+	                        $actorUserId
+	                    ));
+	                    if ($mainChildSpecs) {
+	                        rw_apply_main_child_totals(
+	                            $editingReservationId,
+	                            $targetFolioId,
+	                            $lodgingConceptId,
+	                            $mainChildSpecs,
+	                            $serviceDateForLodging,
+	                            $actorUserId,
+	                            $fixedChildrenByParentForSave
+	                        );
+	                    }
+	                    if ($extraLodgingConceptSpecs) {
+	                        rw_attach_lodging_concepts_to_folio(
+	                            $editingReservationId,
+	                            $targetFolioId,
+	                            $extraLodgingConceptSpecs,
+	                            $lodgingOptionsMap,
+	                            $serviceDateForLodging,
+	                            $lineQty,
+	                            $actorUserId,
+	                            $fixedChildrenByParentForSave
+	                        );
+	                    }
+	                    pms_call_procedure('sp_line_item_percent_derived_upsert', array(
+	                        $targetFolioId,
+	                        $editingReservationId,
+	                        $lodgingConceptId,
+	                        $serviceDateForLodging,
+	                        $actorUserId
+	                    ));
+	                    try {
+	                        pms_call_procedure('sp_folio_recalc', array($targetFolioId));
+	                    } catch (Exception $ignoreFolioRecalc) {
+	                    }
+	                    rw_sync_reservation_origin_from_lodging(
+	                        $companyCode,
+	                        $companyId,
+	                        $editingReservationId,
+	                        $lodgingConceptId,
+	                        $actorUserId
+	                    );
+	                    $messages[] = 'Tipo de hospedaje actualizado correctamente.';
+	                    $step = 1;
+	                    rw_set_calendar_focus(
+	                        $calendarFocusReservationId,
+	                        $calendarFocusPropertyCode,
+	                        $calendarFocusRoomCode,
+	                        $calendarFocusCheckIn,
+	                        $editingReservationId,
+	                        $wizard['property_code'],
+	                        $wizard['room_code'],
+	                        $wizard['check_in']
+	                    );
+	                    $redirectToCalendar = true;
+	                } else {
+	                    if ($editingFolioCount > 0) {
+	                        throw new Exception('La reservacion ya tiene folios.');
+	                    }
+	                    pms_call_procedure('sp_reservation_add_folio', array(
+	                        $companyCode,
+	                        $editingReservationId,
+	                        $guestIdValue,
+	                        $lodgingConceptId,
+	                        $totalOverrideCents,
+	                        $wizard['adults'],
+	                        $wizard['children'],
+	                        $actorUserId
+	                    ));
+	                    if ($mainChildSpecs) {
+	                        $folioId = rw_get_latest_folio_id($editingReservationId);
+	                        rw_apply_main_child_totals(
+	                            $editingReservationId,
+	                            $folioId,
+	                            $lodgingConceptId,
+	                            $mainChildSpecs,
+	                            $wizard['check_in'],
+	                            $actorUserId,
+	                            $fixedChildrenByParentForSave
+	                        );
+	                    }
+	                    if ($extraLodgingConceptSpecs) {
+	                        $folioId = rw_get_latest_folio_id($editingReservationId);
+	                        rw_attach_lodging_concepts_to_folio(
+	                            $editingReservationId,
+	                            $folioId,
+	                            $extraLodgingConceptSpecs,
+	                            $lodgingOptionsMap,
+	                            $wizard['check_in'],
+	                            $count,
+	                            $actorUserId,
+	                            $fixedChildrenByParentForSave
+	                        );
+	                    }
+	                    $paymentResult = wizard_apply_payments($editingReservationId, $actorUserId, $wizard['property_code']);
+	                    $paymentFailed = false;
+	                    if (isset($paymentResult['attempted'], $paymentResult['created']) && (int)$paymentResult['attempted'] > 0 && (int)$paymentResult['created'] === 0) {
+	                        $errors[] = 'No se pudo registrar ningun pago inicial.';
+	                        if (!empty($paymentResult['errors'])) {
+	                            $cleanPaymentErrors = array_map('rw_normalize_error_message', array_unique($paymentResult['errors']));
+	                            $errors[] = 'Detalle pagos: ' . implode(' | ', $cleanPaymentErrors);
+	                        }
+	                        $paymentFailed = true;
+	                    }
+	                    if (!$paymentFailed) {
+	                        $createdPaymentCents = isset($paymentResult['created_amount_cents']) ? (int)$paymentResult['created_amount_cents'] : 0;
+	                        if ($createdPaymentCents > 0) {
+	                            $messages[] = 'Pago registrado por $' . number_format($createdPaymentCents / 100, 2, '.', ',') . ' MXN.';
+	                        }
+	                        $messages[] = 'Cargos agregados correctamente.';
+	                        $step = 1;
+	                        rw_set_calendar_focus(
+	                            $calendarFocusReservationId,
+	                            $calendarFocusPropertyCode,
+	                            $calendarFocusRoomCode,
+	                            $calendarFocusCheckIn,
+	                            $editingReservationId,
+	                            $wizard['property_code'],
+	                            $wizard['room_code'],
+	                            $wizard['check_in']
+	                        );
+	                        $redirectToCalendar = true;
+	                    } else {
+	                        $step = 3;
+	                    }
+	                }
+	            } else {
+	                throw new Exception('Solo puedes agregar cargos a reservas confirmadas o en casa.');
+	            }
+        } else {
+            $guestEmailParam = trim((string)$wizard['guest_email']);
+            $guestEmailParam = $guestEmailParam === '' ? null : $guestEmailParam;
+            $guestIdValue = $wizard['guest_id'] > 0 ? $wizard['guest_id'] : 0;
+            if ($guestIdValue <= 0) {
+                $selectedGuestId = (int)rw_input('wizard_selected_guest_id', 0);
+                if ($selectedGuestId > 0) {
+                    $guestIdValue = $selectedGuestId;
+                }
+            }
+            $guestNamesParam = trim((string)$wizard['guest_names']);
+            $guestLastParam = trim((string)$wizard['guest_last']);
+            $guestMaidenParam = trim((string)$wizard['guest_maiden']);
+            $guestPhoneParam = $guestPhoneCombined !== '' ? $guestPhoneCombined : null;
+            if ($guestNamesParam === '') $guestNamesParam = null;
+            if ($guestLastParam === '') $guestLastParam = null;
+            if ($guestMaidenParam === '') $guestMaidenParam = null;
+            $resultSets = pms_call_procedure('sp_create_reservation', array(
+                $wizard['property_code'],
+                $wizard['room_code'],
+                $wizard['check_in'],
+                $wizard['check_out'],
+                $guestEmailParam,
+                $guestNamesParam,
+                $guestLastParam,
+                $guestMaidenParam,
+                $guestPhoneParam,
+                $wizard['adults'],
+                $wizard['children'],
+                $lodgingConceptId,
+                $totalOverrideCents,
+                null,
+                null,
+                $wizardSourceInput,
+                $wizardOtaAccountId,
+                $actorUserId
+            ));
+            $resultRow = isset($resultSets[0][0]) ? $resultSets[0][0] : null;
+            $newReservationId = 0;
+            if (!empty($resultSets) && is_array($resultSets)) {
+                foreach ($resultSets as $set) {
+                    if (!is_array($set) || empty($set)) {
+                        continue;
+                    }
+                    foreach ($set as $row) {
+                        if (!is_array($row)) {
+                            continue;
+                        }
+                        if (isset($row['id_reservation']) && (int)$row['id_reservation'] > 0) {
+                            $newReservationId = (int)$row['id_reservation'];
+                            $resultRow = $row;
+                            break 2;
+                        }
+                    }
+                }
+            }
+            if ($resultRow && isset($resultRow['status']) && strtoupper((string)$resultRow['status']) === 'ERROR') {
+                $errors[] = 'Error al crear la reserva: ' . (isset($resultRow['message']) ? $resultRow['message'] : 'Sin detalle.');
+                $step = 2;
+            } else {
+                if ($newReservationId <= 0 && $resultRow && isset($resultRow['id_reservation'])) {
+                    $newReservationId = (int)$resultRow['id_reservation'];
+                }
+                if ($newReservationId <= 0) {
+                    throw new Exception('No se pudo obtener el id de la reservacion creada.');
+                }
+                $newFolioId = 0;
+                if ($guestIdValue > 0 && $newReservationId > 0) {
+                    $pdo = pms_get_connection();
+                    $stmt = $pdo->prepare('UPDATE reservation SET id_guest = ?, updated_at = NOW() WHERE id_reservation = ?');
+                    $stmt->execute(array($guestIdValue, $newReservationId));
+                }
+                if ($newReservationId > 0 && trim($wizard['notes_internal']) !== '') {
+                    pms_call_procedure('sp_reservation_note_upsert', array(
+                        'create',
+                        0,
+                        $newReservationId,
+                        'internal',
+                        $wizard['notes_internal'],
+                        1,
+                        $companyCode,
+                        $actorUserId
+                    ));
+                }
+                if ($newReservationId > 0) {
+                    try {
+                        $pdo = isset($pdo) ? $pdo : pms_get_connection();
+                        $stmt = $pdo->prepare('SELECT id_folio FROM folio WHERE id_reservation = ? AND deleted_at IS NULL ORDER BY created_at DESC, id_folio DESC LIMIT 1');
+                        $stmt->execute(array($newReservationId));
+                        $newFolioId = (int)$stmt->fetchColumn();
+                    } catch (Exception $e) {
+                        $newFolioId = 0;
+                    }
+                }
+            if ($newReservationId > 0 && $newFolioId <= 0 && $guestIdValue > 0 && $totalOverrideCents > 0) {
+                try {
+                    pms_call_procedure('sp_reservation_add_folio', array(
+                        $companyCode,
+                        $newReservationId,
+                        $guestIdValue,
+                            $lodgingConceptId,
+                            $totalOverrideCents,
+                            $wizard['adults'],
+                            $wizard['children'],
+                            $actorUserId
+                    ));
+                } catch (Exception $e) {
+                    $errors[] = 'No se pudo crear folio para pagos: ' . rw_normalize_error_message($e->getMessage());
+                }
+            }
+            if ($newReservationId > 0) {
+                if ($newFolioId <= 0) {
+                    $newFolioId = rw_get_latest_folio_id($newReservationId);
+                }
+                if ($newFolioId > 0 && $mainChildSpecs) {
+                    rw_apply_main_child_totals(
+                        $newReservationId,
+                        $newFolioId,
+                        $lodgingConceptId,
+                        $mainChildSpecs,
+                        $wizard['check_in'],
+                        $actorUserId,
+                        $fixedChildrenByParentForSave
+                    );
+                }
+            }
+            if ($newReservationId > 0 && $extraLodgingConceptSpecs) {
+                if ($newFolioId <= 0) {
+                    $newFolioId = rw_get_latest_folio_id($newReservationId);
+                }
+                if ($newFolioId > 0) {
+                    rw_attach_lodging_concepts_to_folio(
+                        $newReservationId,
+                        $newFolioId,
+                        $extraLodgingConceptSpecs,
+                        $lodgingOptionsMap,
+                        $wizard['check_in'],
+                        $count,
+                        $actorUserId,
+                        $fixedChildrenByParentForSave
+                    );
+                }
+            }
+                $paymentResult = wizard_apply_payments($newReservationId, $actorUserId, $wizard['property_code']);
+                $paymentFailed = false;
+                if (isset($paymentResult['attempted'], $paymentResult['created']) && (int)$paymentResult['attempted'] > 0 && (int)$paymentResult['created'] === 0) {
+                    $errors[] = 'No se pudo registrar ningun pago inicial.';
+                    if (!empty($paymentResult['errors'])) {
+                        $cleanPaymentErrors = array_map('rw_normalize_error_message', array_unique($paymentResult['errors']));
+                        $errors[] = 'Detalle pagos: ' . implode(' | ', $cleanPaymentErrors);
+                    }
+                    $paymentFailed = true;
+                }
+                if (!$paymentFailed) {
+                    $createdPaymentCents = isset($paymentResult['created_amount_cents']) ? (int)$paymentResult['created_amount_cents'] : 0;
+                    if ($createdPaymentCents > 0) {
+                        $messages[] = 'Pago registrado por $' . number_format($createdPaymentCents / 100, 2, '.', ',') . ' MXN.';
+                    }
+                    $messages[] = 'Reserva creada correctamente.';
+                    $step = 1;
+                    rw_set_calendar_focus(
+                        $calendarFocusReservationId,
+                        $calendarFocusPropertyCode,
+                        $calendarFocusRoomCode,
+                        $calendarFocusCheckIn,
+                        $newReservationId,
+                        $wizard['property_code'],
+                        $wizard['room_code'],
+                        $wizard['check_in']
+                    );
+                    $redirectToCalendar = true;
+                } else {
+                    $step = 3;
+                }
+            }
+        }
+        }
+    } catch (Exception $e) {
+        $errors[] = 'Error al crear la reserva: ' . rw_normalize_error_message($e->getMessage());
+        $step = 2;
+    }
+}
+
+// Si hubo error al crear/confirmar y regresamos al paso 2, volver a cargar opciones.
+if ($step === 2 && empty($lodgingOptions) && $wizard['property_code'] !== '') {
+    $lodgingOptions = rw_fetch_lodging_options_with_children($companyCode, $wizard['property_code'], $companyId);
+}
+
+$wizardFixedChildrenByParent = array();
+if ($wizard['property_code'] !== '') {
+    $wizardFixedChildrenByParent = rw_fetch_fixed_children_by_parent($companyCode, $wizard['property_code'], $companyId);
+}
+
+if ($redirectToCalendar) {
+    $wizardReturnUrl = rw_build_calendar_return_url(
+        $wizardReturnPropertyCode,
+        $wizardReturnStartDate,
+        $wizardReturnViewMode,
+        $wizardReturnOrderMode,
+        $wizardReturnCurrentSubtab,
+        $wizardReturnDirtyTabs,
+        $wizardReturnRestore,
+        $calendarFocusReservationId,
+        $calendarFocusPropertyCode,
+        $calendarFocusRoomCode,
+        $calendarFocusCheckIn
+    );
+}
+
+?>
+<style>
+  .wizard-lightbox-host {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .wizard-lightbox-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(3, 10, 20, 0.78);
+  }
+  .wizard-lightbox-shell {
+    position: relative;
+    z-index: 1;
+    width: min(1320px, calc(100vw - 24px));
+    max-height: calc(100vh - 28px);
+    overflow: auto;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 14px;
+    background: rgba(7, 16, 29, 0.98);
+    box-shadow: 0 22px 64px rgba(0,0,0,0.5);
+  }
+  .wizard-lightbox-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: rgba(7, 16, 29, 0.97);
+  }
+  .wizard-lightbox-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #d9ecff;
+  }
+  .wizard-lightbox-body {
+    padding: 12px 14px 16px;
+  }
+</style>
+
+<div class="subtab-info wizard-lightbox-host" id="wizard-lightbox-host">
+  <div class="wizard-lightbox-backdrop"></div>
+  <div class="wizard-lightbox-shell" role="dialog" aria-modal="true" aria-labelledby="wizard-lightbox-title">
+	    <div class="wizard-lightbox-head">
+	      <h3 class="wizard-lightbox-title" id="wizard-lightbox-title">
+	        <?php
+	          if ($replaceLodgingMode && $editingReservationId > 0) {
+	              echo 'Cambiar tipo de hospedaje';
+	          } else {
+	              echo $editingReservationId > 0 ? 'Editar reservacion' : 'Nueva reservacion';
+	          }
+	        ?>
+	      </h3>
+	      <button type="button" class="button-secondary" id="wizard-lightbox-close">Cerrar</button>
+	    </div>
+    <div class="wizard-lightbox-body">
+  <?php foreach ($errors as $err): ?>
+    <p class="error"><?php echo htmlspecialchars($err, ENT_QUOTES, 'UTF-8'); ?></p>
+  <?php endforeach; ?>
+  <?php foreach ($messages as $msg): ?>
+    <p class="success"><?php echo htmlspecialchars($msg, ENT_QUOTES, 'UTF-8'); ?></p>
+  <?php endforeach; ?>
+    <?php if ($redirectToCalendar): ?>
+    <script>window.location.href = <?php echo json_encode($wizardReturnUrl, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;</script>
+  <?php endif; ?>
+
+	  <form method="post" class="reservation-create-form">
+	    <input type="hidden" name="wizard_step" value="<?php echo (int)$step; ?>">
+      <?php if ($wizardIsBlockMode): ?>
+        <input type="hidden" name="wizard_block_payload" value="<?php echo htmlspecialchars($wizardBlockPayloadRaw, ENT_QUOTES, 'UTF-8'); ?>">
+      <?php endif; ?>
+      <input type="hidden" name="wizard_return_view" value="<?php echo htmlspecialchars($wizardReturnView, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_return_restore" value="<?php echo $wizardReturnRestore ? '1' : '0'; ?>">
+      <input type="hidden" name="wizard_return_property_code" value="<?php echo htmlspecialchars($wizardReturnPropertyCode, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_return_start_date" value="<?php echo htmlspecialchars($wizardReturnStartDate, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_return_view_mode" value="<?php echo htmlspecialchars($wizardReturnViewMode, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_return_order_mode" value="<?php echo htmlspecialchars($wizardReturnOrderMode, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_return_calendar_current_subtab" value="<?php echo htmlspecialchars($wizardReturnCurrentSubtab, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_return_calendar_dirty_tabs" value="<?php echo htmlspecialchars($wizardReturnDirtyTabs, ENT_QUOTES, 'UTF-8'); ?>">
+	    <?php if ($editingReservationId > 0): ?>
+	      <input type="hidden" name="wizard_reservation_id" value="<?php echo (int)$editingReservationId; ?>">
+	    <?php endif; ?>
+	    <?php if ($replaceLodgingMode): ?>
+	      <input type="hidden" name="wizard_replace_lodging" value="1">
+	      <input type="hidden" name="wizard_replace_folio_id" value="<?php echo (int)$replaceLodgingFolioId; ?>">
+	    <?php endif; ?>
+
+    <?php if ($step === 1): ?>
+      <?php if (!$wizardIsBlockMode && $postedBreakdownDates): ?>
+        <?php foreach ($postedBreakdownDates as $idx => $d): ?>
+          <input type="hidden" name="breakdown_date[]" value="<?php echo htmlspecialchars((string)$d, ENT_QUOTES, 'UTF-8'); ?>">
+          <input type="hidden" name="breakdown_amount[]" value="<?php echo htmlspecialchars(isset($postedBreakdownAmounts[$idx]) ? (string)$postedBreakdownAmounts[$idx] : '0', ENT_QUOTES, 'UTF-8'); ?>">
+        <?php endforeach; ?>
+      <?php endif; ?>
+      <?php if ($wizardIsBlockMode && $postedBlockBreakdownDates): ?>
+        <?php foreach ($postedBlockBreakdownDates as $blockIdx => $blockDates): ?>
+          <?php if (!is_array($blockDates)) continue; ?>
+          <?php $blockAmounts = (isset($postedBlockBreakdownAmounts[$blockIdx]) && is_array($postedBlockBreakdownAmounts[$blockIdx])) ? $postedBlockBreakdownAmounts[$blockIdx] : array(); ?>
+          <?php foreach ($blockDates as $rowIdx => $blockDate): ?>
+            <input type="hidden" name="breakdown_block_date[<?php echo (int)$blockIdx; ?>][]" value="<?php echo htmlspecialchars((string)$blockDate, ENT_QUOTES, 'UTF-8'); ?>">
+            <input type="hidden" name="breakdown_block_amount[<?php echo (int)$blockIdx; ?>][]" value="<?php echo htmlspecialchars(isset($blockAmounts[$rowIdx]) ? (string)$blockAmounts[$rowIdx] : '0', ENT_QUOTES, 'UTF-8'); ?>">
+          <?php endforeach; ?>
+        <?php endforeach; ?>
+      <?php endif; ?>
+	      <input type="hidden" name="wizard_lodging_concept" value="<?php echo htmlspecialchars((string)$wizardLodgingConceptValue, ENT_QUOTES, 'UTF-8'); ?>">
+      <?php foreach ($wizardChildCatalogIds as $childIdx => $childCatalogId): ?>
+        <input type="hidden" name="wizard_child_catalog_id[]" value="<?php echo (int)$childCatalogId; ?>">
+        <input type="hidden" name="wizard_child_parent_catalog_id[]" value="<?php echo isset($wizardChildParentCatalogIds[$childIdx]) ? (int)$wizardChildParentCatalogIds[$childIdx] : 0; ?>">
+        <input type="hidden" name="wizard_child_total[]" value="<?php echo htmlspecialchars(isset($wizardChildTotals[$childIdx]) ? (string)$wizardChildTotals[$childIdx] : '', ENT_QUOTES, 'UTF-8'); ?>">
+      <?php endforeach; ?>
+      <input type="hidden" name="wizard_fixed_total" value="<?php echo htmlspecialchars((string)rw_input('wizard_fixed_total', ''), ENT_QUOTES, 'UTF-8'); ?>">
+      <div class="form-section">
+        <h4>Datos de la reserva</h4>
+        <?php if ($wizardIsBlockMode): ?>
+        <div class="payment-block wizard-block-summary-list">
+          <div class="payment-row-title">Reservaciones en bloque</div>
+          <div class="muted" style="margin-bottom:10px;">Se crearan varias reservaciones para el mismo huesped.</div>
+          <?php foreach ($wizardBlockChunks as $chunk): ?>
+            <div class="wizard-block-summary-item">
+              <strong><?php echo htmlspecialchars((string)$chunk['room_label'], ENT_QUOTES, 'UTF-8'); ?></strong>
+              <span><?php echo htmlspecialchars((string)$chunk['check_in'], ENT_QUOTES, 'UTF-8'); ?> a <?php echo htmlspecialchars((string)$chunk['check_out'], ENT_QUOTES, 'UTF-8'); ?> (<?php echo (int)$chunk['nights']; ?> noche<?php echo ((int)$chunk['nights'] === 1 ? '' : 's'); ?>)</span>
+            </div>
+          <?php endforeach; ?>
+        </div>
+        <?php else: ?>
+        <div class="form-grid grid-3">
+          <label class="<?php echo wizard_field_class($wizard['property_code'], true) . ($lockReservationFields ? ' is-locked' : ''); ?>">Propiedad *
+            <select name="wizard_property" required>
+              <option value="">Selecciona una propiedad</option>
+              <?php foreach ($properties as $p):
+                $code = isset($p['code']) ? strtoupper((string)$p['code']) : '';
+                $name = isset($p['name']) ? (string)$p['name'] : '';
+                if ($code === '') continue; ?>
+                <option value="<?php echo htmlspecialchars($code, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $wizard['property_code']===$code?'selected':''; ?>>
+                  <?php echo htmlspecialchars($code . ' - ' . $name, ENT_QUOTES, 'UTF-8'); ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+          </label>
+          <label class="<?php echo wizard_field_class($wizard['category_code'], false) . ($lockReservationFields ? ' is-locked' : ''); ?>">Categoria
+            <select name="wizard_category">
+              <option value="">Selecciona una categoria</option>
+              <?php
+                $propCats = isset($categoriesByProp[$wizard['property_code']]) ? $categoriesByProp[$wizard['property_code']] : array();
+                foreach ($propCats as $cat):
+                  $ccode = strtoupper((string)$cat['code']);
+                  ?>
+                  <option value="<?php echo htmlspecialchars($ccode, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $wizard['category_code']===$ccode?'selected':''; ?>>
+                    <?php echo htmlspecialchars($ccode . ' - ' . $cat['name'], ENT_QUOTES, 'UTF-8'); ?>
+                  </option>
+              <?php endforeach; ?>
+            </select>
+          </label>
+          <label class="<?php echo wizard_field_class($wizard['room_code'], true) . ($lockReservationFields ? ' is-locked' : ''); ?>">Habitacion *
+            <select name="wizard_room" required>
+              <option value="">Selecciona una habitacion</option>
+              <?php
+                $propRooms = isset($roomsByProp[$wizard['property_code']]) ? $roomsByProp[$wizard['property_code']] : array();
+                foreach ($propRooms as $room):
+                  $rcode = isset($room['code']) ? (string)$room['code'] : '';
+                  $label = isset($room['name']) && $room['name'] !== '' ? $rcode . ' - ' . $room['name'] : $rcode;
+                  ?>
+                  <option value="<?php echo htmlspecialchars($rcode, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $wizard['room_code']===$rcode?'selected':''; ?>>
+                    <?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?>
+                  </option>
+              <?php endforeach; ?>
+            </select>
+          </label>
+        </div>
+        <div class="form-grid grid-2">
+          <label class="<?php echo wizard_field_class($wizard['check_in'], true) . ($lockReservationFields ? ' is-locked' : ''); ?>">Check-in *
+            <input type="date" name="wizard_check_in" value="<?php echo htmlspecialchars($wizard['check_in'], ENT_QUOTES, 'UTF-8'); ?>" required>
+          </label>
+          <label class="<?php echo wizard_field_class($wizard['check_out'], true) . ($lockReservationFields ? ' is-locked' : ''); ?>">Check-out *
+            <input type="date" name="wizard_check_out" value="<?php echo htmlspecialchars($wizard['check_out'], ENT_QUOTES, 'UTF-8'); ?>" required>
+          </label>
+        </div>
+        <?php endif; ?>
+        <div class="form-grid grid-4">
+          <label class="<?php echo wizard_field_class((string)$wizard['source_id'], false); ?>">Origen
+            <select name="wizard_source_id" id="wizard-source-id">
+              <?php foreach ($wizardSourceOptionsCurrent as $sourceOpt): ?>
+                <?php
+                  $sourceId = (string)(isset($sourceOpt['origin_key']) ? $sourceOpt['origin_key'] : 'source:0');
+                  $sourceName = trim((string)(isset($sourceOpt['origin_label']) ? $sourceOpt['origin_label'] : ''));
+                  if ($sourceName === '') {
+                    $sourceName = 'Directo';
+                  }
+                ?>
+                <option value="<?php echo htmlspecialchars($sourceId, ENT_QUOTES, 'UTF-8'); ?>" <?php echo (string)$wizard['source_id'] === $sourceId ? 'selected' : ''; ?>>
+                  <?php echo htmlspecialchars($sourceName, ENT_QUOTES, 'UTF-8'); ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+          </label>
+          <?php if (!$wizardIsBlockMode): ?>
+          <label class="<?php echo wizard_field_class($wizard['code'], false); ?>">Codigo de reservacion (opcional)
+            <input type="text" name="wizard_code" value="<?php echo htmlspecialchars($wizard['code'], ENT_QUOTES, 'UTF-8'); ?>">
+          </label>
+          <?php else: ?>
+          <input type="hidden" name="wizard_code" value="">
+          <?php endif; ?>
+          <label class="<?php echo wizard_field_class($wizard['adults'], true); ?>">Adultos
+            <input type="number" min="1" name="wizard_adults" value="<?php echo (int)$wizard['adults']; ?>">
+          </label>
+          <label class="<?php echo wizard_field_class($wizard['children'], false); ?>">Menores
+            <input type="number" min="0" name="wizard_children" value="<?php echo (int)$wizard['children']; ?>">
+          </label>
+        </div>
+
+      <div class="form-section">
+        <h4>Información del huésped</h4>
+        <div class="form-grid grid-3">
+          <label class="<?php echo wizard_field_class($wizard['guest_names'], false); ?>">Nombre huesped
+            <input type="text" name="wizard_guest_names" value="<?php echo htmlspecialchars($wizard['guest_names'], ENT_QUOTES, 'UTF-8'); ?>" data-guest-scope="wizard" data-guest-field="names" required>
+          </label>
+          <label class="<?php echo wizard_field_class($wizard['guest_last'], false); ?>">Apellido paterno
+            <input type="text" name="wizard_guest_last" value="<?php echo htmlspecialchars($wizard['guest_last'], ENT_QUOTES, 'UTF-8'); ?>" data-guest-scope="wizard" data-guest-field="last">
+          </label>
+          <label class="<?php echo wizard_field_class($wizard['guest_maiden'], false); ?>">Apellido materno
+            <input type="text" name="wizard_guest_maiden" value="<?php echo htmlspecialchars($wizard['guest_maiden'], ENT_QUOTES, 'UTF-8'); ?>" data-guest-scope="wizard" data-guest-field="maiden">
+          </label>
+        </div>
+        <div class="form-grid grid-2">
+          <label class="<?php echo wizard_field_class($wizard['guest_email'], false); ?>">Correo huesped
+            <input type="email" name="wizard_email" value="<?php echo htmlspecialchars($wizard['guest_email'], ENT_QUOTES, 'UTF-8'); ?>" data-guest-scope="wizard" data-guest-field="email">
+          </label>
+          <label class="<?php echo wizard_field_class($wizard['guest_phone'], false); ?>">Telefono
+            <div class="phone-row">
+              <select name="wizard_phone_prefix" data-guest-scope="wizard" data-guest-field="prefix">
+                <?php $wizardPrefixSelected = false; ?>
+                <?php foreach ($phoneCountries as $phoneCountry): ?>
+                  <?php
+                    $pref = isset($phoneCountry['dial']) ? (string)$phoneCountry['dial'] : '';
+                    if ($pref === '') {
+                        continue;
+                    }
+                    $countryName = isset($phoneCountry['name_es']) ? (string)$phoneCountry['name_es'] : strtoupper((string)(isset($phoneCountry['iso2']) ? $phoneCountry['iso2'] : ''));
+                    $isSelected = (!$wizardPrefixSelected && $wizard['guest_prefix'] === $pref);
+                    if ($isSelected) {
+                        $wizardPrefixSelected = true;
+                    }
+                  ?>
+                  <option value="<?php echo htmlspecialchars($pref, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $isSelected ? 'selected' : ''; ?>>
+                    <?php echo htmlspecialchars($countryName . ' (' . $pref . ')', ENT_QUOTES, 'UTF-8'); ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+              <input type="tel" name="wizard_phone" value="<?php echo htmlspecialchars($wizard['guest_phone'], ENT_QUOTES, 'UTF-8'); ?>" placeholder="WhatsApp" data-guest-scope="wizard" data-guest-field="phone">
+            </div>
+          </label>
+        </div>
+          <input type="hidden" name="wizard_guest_id" value="<?php echo (int)$wizard['guest_id']; ?>" data-guest-id-field="wizard">
+          <input type="hidden" name="wizard_selected_guest_id" value="<?php echo (int)$wizard['guest_id']; ?>">
+        <div class="guest-suggestions full" data-guest-suggestions="wizard" style="display:none;"></div>
+        <div class="form-actions">
+          <button type="button" class="button-secondary" id="wizard-guest-unlock" style="display:none;">Cambiar huesped</button>
+        </div>
+        <div class="form-grid grid-1">
+          <label class="<?php echo wizard_field_class($wizard['notes_internal'], false); ?>">Notas internas
+            <textarea name="wizard_notes_internal" rows="3"><?php echo htmlspecialchars($wizard['notes_internal'], ENT_QUOTES, 'UTF-8'); ?></textarea>
+          </label>
+        </div>
+      </div>
+
+        <div class="form-actions wizard-actions wizard-actions-step1">
+          <button type="submit" class="button-secondary" name="wizard_next" value="1"><?php echo $replaceLodgingMode ? 'Continuar a hospedaje' : 'Continuar a precios'; ?></button>
+          <?php if (!$replaceLodgingMode && !$wizardIsBlockMode): ?>
+            <button type="submit" class="button-primary wizard-create-no-price" name="wizard_create_now" value="1">
+              <?php echo $editingReservationId > 0 ? 'Confirmar reservacion' : 'Crear reservación sin precio'; ?>
+            </button>
+          <?php endif; ?>
+        </div>
+    <?php elseif ($step === 2): ?>
+      <input type="hidden" name="wizard_step" value="3">
+      <?php if ($wizardIsBlockMode): ?>
+        <input type="hidden" name="wizard_block_payload" value="<?php echo htmlspecialchars($wizardBlockPayloadRaw, ENT_QUOTES, 'UTF-8'); ?>">
+      <?php endif; ?>
+      <!-- Persistir paso 1 -->
+            <input type="hidden" name="wizard_property" value="<?php echo htmlspecialchars($wizard['property_code'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_category" value="<?php echo htmlspecialchars($wizard['category_code'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_room" value="<?php echo htmlspecialchars($wizard['room_code'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_check_in" value="<?php echo htmlspecialchars($wizard['check_in'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_check_out" value="<?php echo htmlspecialchars($wizard['check_out'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_source_id" value="<?php echo htmlspecialchars((string)$wizard['source_id'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_adults" value="<?php echo (int)$wizard['adults']; ?>">
+      <input type="hidden" name="wizard_children" value="<?php echo (int)$wizard['children']; ?>">
+      <input type="hidden" name="wizard_code" value="<?php echo htmlspecialchars($wizard['code'], ENT_QUOTES, 'UTF-8'); ?>">
+        <input type="hidden" name="wizard_guest_id" value="<?php echo (int)$wizard['guest_id']; ?>">
+        <input type="hidden" name="wizard_selected_guest_id" value="<?php echo (int)$wizard['guest_id']; ?>">
+      <input type="hidden" name="wizard_phone_prefix" value="<?php echo htmlspecialchars($wizard['guest_prefix'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_phone" value="<?php echo htmlspecialchars($wizard['guest_phone'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_email" value="<?php echo htmlspecialchars($wizard['guest_email'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_guest_names" value="<?php echo htmlspecialchars($wizard['guest_names'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_guest_last" value="<?php echo htmlspecialchars($wizard['guest_last'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_guest_maiden" value="<?php echo htmlspecialchars($wizard['guest_maiden'], ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="wizard_notes_internal" value="<?php echo htmlspecialchars($wizard['notes_internal'], ENT_QUOTES, 'UTF-8'); ?>">
+
+      <div class="form-section" style="padding:0;border:none;background:transparent;">
+        <?php $selectedLodging = (int)$wizardLodgingConceptValue; ?>
+        <?php if ($wizardIsBlockMode): ?>
+        <div style="margin-bottom:10px;">
+          <div class="payment-row-title" style="font-size:1.05rem;font-weight:800;letter-spacing:.02em;">Precios de hospedaje</div>
+          <div class="payment-block" style="border:1px solid rgba(59,130,246,.25); border-radius:12px; padding:16px 18px; margin-top:8px; background:rgba(6,24,48,.45);">
+            <div class="form-grid grid-2">
+              <label class="<?php echo wizard_field_class($selectedLodging > 0 ? (string)$selectedLodging : '', true); ?>">Precio de hospedaje *
+                <select name="wizard_lodging_concept" required id="wizard-lodging-concept">
+                  <option value=""><?php echo $lodgingOptions ? "Selecciona un precio" : "Sin conceptos configurados"; ?></option>
+                  <?php foreach ($lodgingOptions as $opt): ?>
+                    <option value="<?php echo (int)$opt['id']; ?>" <?php echo $selectedLodging === (int)$opt['id'] ? 'selected' : ''; ?>>
+                      <?php echo htmlspecialchars($opt['label'], ENT_QUOTES, 'UTF-8'); ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+              </label>
+              <div class="payment-block" style="margin:0;">
+                <div class="payment-row-title">Aplicacion</div>
+                <div class="muted">El concepto seleccionado se aplicara igual a todas las reservaciones del bloque.</div>
+              </div>
+            </div>
+
+            <div class="wizard-block-breakdown-grid">
+              <?php
+              $monthsEs = array(
+                1 => 'enero',
+                2 => 'febrero',
+                3 => 'marzo',
+                4 => 'abril',
+                5 => 'mayo',
+                6 => 'junio',
+                7 => 'julio',
+                8 => 'agosto',
+                9 => 'septiembre',
+                10 => 'octubre',
+                11 => 'noviembre',
+                12 => 'diciembre'
+              );
+              ?>
+              <?php foreach ($wizardBlockChunks as $blockIdx => $chunk): ?>
+                <?php
+                  $blockBreakdown = isset($chunk['breakdown']) && is_array($chunk['breakdown']) ? $chunk['breakdown'] : array();
+                  $blockTotalCents = isset($chunk['total_cents']) ? (int)$chunk['total_cents'] : 0;
+                  $blockAvgCents = isset($chunk['avg_cents']) ? (int)$chunk['avg_cents'] : 0;
+                ?>
+                <div class="payment-block wizard-block-breakdown-card" data-block-index="<?php echo (int)$blockIdx; ?>">
+                  <div class="payment-row-title"><?php echo htmlspecialchars((string)$chunk['room_label'], ENT_QUOTES, 'UTF-8'); ?></div>
+                  <div class="muted" style="margin-bottom:10px;"><?php echo htmlspecialchars((string)$chunk['check_in'], ENT_QUOTES, 'UTF-8'); ?> a <?php echo htmlspecialchars((string)$chunk['check_out'], ENT_QUOTES, 'UTF-8'); ?> (<?php echo (int)$chunk['nights']; ?> noche<?php echo ((int)$chunk['nights'] === 1 ? '' : 's'); ?>)</div>
+                  <div class="form-grid grid-2">
+                    <label>Total
+                      <input type="text" data-block-total readonly value="<?php echo htmlspecialchars(number_format($blockTotalCents / 100, 2, '.', ''), ENT_QUOTES, 'UTF-8'); ?>">
+                    </label>
+                    <label>Promedio por noche
+                      <input type="text" data-block-avg readonly value="<?php echo htmlspecialchars(number_format($blockAvgCents / 100, 2, '.', ''), ENT_QUOTES, 'UTF-8'); ?>">
+                    </label>
+                  </div>
+                  <div class="nightly-breakdown">
+                    <?php foreach ($blockBreakdown as $row): ?>
+                      <div class="nightly-row">
+                        <?php
+                          $rowDate = strtotime($row['date']);
+                          $monthName = isset($monthsEs[(int)date('n', $rowDate)]) ? $monthsEs[(int)date('n', $rowDate)] : date('m', $rowDate);
+                          $rowLabel = date('d', $rowDate) . ' ' . $monthName . ' ' . date('Y', $rowDate);
+                        ?>
+                        <span class="nightly-date"><?php echo htmlspecialchars($rowLabel, ENT_QUOTES, 'UTF-8'); ?></span>
+                        <input type="hidden" name="breakdown_block_date[<?php echo (int)$blockIdx; ?>][]" value="<?php echo htmlspecialchars($row['date'], ENT_QUOTES, 'UTF-8'); ?>">
+                        <input class="nightly-amount-input" type="number" step="0.01" name="breakdown_block_amount[<?php echo (int)$blockIdx; ?>][]" value="<?php echo htmlspecialchars(number_format($row['amount']/100, 2, '.', ''), ENT_QUOTES, 'UTF-8'); ?>">
+                      </div>
+                    <?php endforeach; ?>
+                  </div>
+                </div>
+              <?php endforeach; ?>
+            </div>
+          </div>
+        </div>
+
+        <div id="wizard-grand-total-wrap" class="payment-block" style="margin-top:14px; border:1px solid rgba(56,189,248,.35); border-radius:12px; padding:14px 16px; background:rgba(10,30,56,.55);">
+          <div class="payment-row-title" style="font-size:1.02rem;">Gran total</div>
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+            <input type="text" id="wizard-grand-total" readonly value="0.00" style="max-width:220px; text-align:right; font-weight:800;">
+            <span style="font-weight:700;">MXN</span>
+          </div>
+        </div>
+        <?php else: ?>
+        <div style="margin-bottom:10px;">
+          <div class="payment-row-title" style="font-size:1.05rem;font-weight:800;letter-spacing:.02em;">Precios de hospedaje</div>
+          <div class="payment-block" style="border:1px solid rgba(59,130,246,.25); border-radius:12px; padding:16px 18px; margin-top:8px; background:rgba(6,24,48,.45);">
+            <div class="form-grid grid-2">
+              <label class="<?php echo wizard_field_class($selectedLodging > 0 ? (string)$selectedLodging : '', true); ?>">Precio de hospedaje *
+                <select name="wizard_lodging_concept" required id="wizard-lodging-concept">
+                  <option value=""><?php echo $lodgingOptions ? "Selecciona un precio" : "Sin conceptos configurados"; ?></option>
+                  <?php foreach ($lodgingOptions as $opt): ?>
+                    <option value="<?php echo (int)$opt['id']; ?>"
+                      data-child-id="<?php echo isset($opt['child_id']) ? (int)$opt['child_id'] : 0; ?>"
+                      data-child-name="<?php echo htmlspecialchars(isset($opt['child_name']) ? (string)$opt['child_name'] : '', ENT_QUOTES, 'UTF-8'); ?>"
+                      data-child-label="<?php echo htmlspecialchars(isset($opt['child_label']) ? (string)$opt['child_label'] : '', ENT_QUOTES, 'UTF-8'); ?>"
+                      data-child-default="<?php echo isset($opt['child_default_cents']) ? (int)$opt['child_default_cents'] : 0; ?>"
+                      data-fixed-children="<?php echo htmlspecialchars(json_encode(isset($opt['fixed_children']) ? $opt['fixed_children'] : array(), JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8'); ?>"
+                      <?php echo $selectedLodging === (int)$opt['id'] ? 'selected' : ''; ?>>
+                      <?php echo htmlspecialchars($opt['label'], ENT_QUOTES, 'UTF-8'); ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+              </label>
+            </div>
+
+            <div class="payment-tab-panel is-active" data-panel="breakdown" style="display:block;">
+              <div class="wizard-breakdown-layout">
+                <div class="payment-block wizard-breakdown-summary">
+                  <div class="payment-row-title">Totales</div>
+                  <div class="form-grid grid-1">
+                    <label>Total
+                      <input type="text" id="wizard-total-sum" inputmode="decimal" autocomplete="off">
+                    </label>
+                    <label>Promedio por noche
+                      <input type="text" id="wizard-avg-night" inputmode="decimal" autocomplete="off">
+                    </label>
+                  </div>
+                </div>
+                <div class="payment-block wizard-breakdown-list">
+                  <div class="payment-row-title">Desglose por noche</div>
+                  <div class="nightly-breakdown">
+                    <?php
+                    $monthsEs = array(
+                      1 => 'enero',
+                      2 => 'febrero',
+                      3 => 'marzo',
+                      4 => 'abril',
+                      5 => 'mayo',
+                      6 => 'junio',
+                      7 => 'julio',
+                      8 => 'agosto',
+                      9 => 'septiembre',
+                      10 => 'octubre',
+                      11 => 'noviembre',
+                      12 => 'diciembre'
+                    );
+                    ?>
+                    <?php foreach ($breakdown as $row): ?>
+                      <div class="nightly-row">
+                        <?php
+                        $rowDate = strtotime($row['date']);
+                        $monthName = isset($monthsEs[(int)date('n', $rowDate)]) ? $monthsEs[(int)date('n', $rowDate)] : date('m', $rowDate);
+                        $rowLabel = date('d', $rowDate) . ' ' . $monthName . ' ' . date('Y', $rowDate);
+                        ?>
+                        <span class="nightly-date"><?php echo htmlspecialchars($rowLabel, ENT_QUOTES, 'UTF-8'); ?></span>
+                        <input type="hidden" name="breakdown_date[]" value="<?php echo htmlspecialchars($row['date'], ENT_QUOTES, 'UTF-8'); ?>">
+                        <input class="nightly-amount-input" type="number" step="0.01" name="breakdown_amount[]" value="<?php echo htmlspecialchars(number_format($row['amount']/100, 2, '.', ''), ENT_QUOTES, 'UTF-8'); ?>">
+                      </div>
+                    <?php endforeach; ?>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="payment-block" id="wizard-child-row" style="display:none; border:1px solid rgba(59,130,246,.25); border-radius:10px; padding:10px 12px; background:rgba(8,24,46,.35); margin-top:10px;">
+              <div id="wizard-child-list"></div>
+            </div>
+            <template id="wizard-child-template">
+              <div class="payment-block wizard-child-item" style="margin-top:10px;">
+                <div class="payment-row-title wizard-child-title">Derivados</div>
+                <div class="form-grid grid-1 wizard-child-grid">
+                  <label>Total
+                    <input type="text" inputmode="decimal" autocomplete="off" name="wizard_child_total[]" class="wizard-child-total" placeholder="0.00">
+                  </label>
+                </div>
+                <input type="hidden" name="wizard_child_catalog_id[]" class="wizard-child-catalog-id" value="0">
+                <input type="hidden" name="wizard_child_parent_catalog_id[]" class="wizard-child-parent-catalog-id" value="0">
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div id="wizard-grand-total-wrap" class="payment-block" style="display:none; margin-top:14px; border:1px solid rgba(56,189,248,.35); border-radius:12px; padding:14px 16px; background:rgba(10,30,56,.55);">
+          <div class="payment-row-title" style="font-size:1.02rem;">Gran total</div>
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+            <input type="text" id="wizard-grand-total" readonly value="0.00" style="max-width:220px; text-align:right; font-weight:800;">
+            <span style="font-weight:700;">MXN</span>
+          </div>
+        </div>
+
+        <?php if (!$replaceLodgingMode): ?>
+        <div id="wizard-payment-wrap" class="payment-block" style="margin-top:14px; border:1px solid rgba(56,189,248,.35); border-radius:12px; padding:14px 16px; background:rgba(10,30,56,.55);">
+          <div class="payment-row-title" style="font-size:1.02rem;">Pago inicial (opcional)</div>
+          <label class="wizard-payment-toggle">
+            <input type="checkbox" id="wizard-include-payment" name="wizard_include_payment" value="1" <?php echo $wizardIncludePayment ? 'checked' : ''; ?>>
+            <span>Incluir pago</span>
+          </label>
+          <div id="wizard-payment-fields" style="<?php echo $wizardIncludePayment ? '' : 'display:none;'; ?>">
+            <div class="form-grid grid-2">
+              <label>Metodo de pago *
+                <select name="wizard_payment_method_single" id="wizard-payment-method-single">
+                  <option value="">Selecciona un metodo</option>
+                  <?php foreach ($wizardPaymentCatalogOptions as $methodOpt): ?>
+                    <?php $methodIdOpt = isset($methodOpt['id_payment_catalog']) ? (int)$methodOpt['id_payment_catalog'] : 0; ?>
+                    <?php if ($methodIdOpt <= 0) continue; ?>
+                    <?php $methodNameOpt = isset($methodOpt['name']) ? (string)$methodOpt['name'] : ('Metodo #' . $methodIdOpt); ?>
+                    <option value="<?php echo $methodIdOpt; ?>" <?php echo ((string)$methodIdOpt === (string)$wizardPaymentMethodSingle) ? 'selected' : ''; ?>>
+                      <?php echo htmlspecialchars($methodNameOpt, ENT_QUOTES, 'UTF-8'); ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+              </label>
+              <label>Cantidad de pago
+                <select name="wizard_payment_mode" id="wizard-payment-mode">
+                  <option value="full" <?php echo $wizardPaymentMode === 'full' ? 'selected' : ''; ?>>Pagado completo</option>
+                  <option value="fixed" <?php echo $wizardPaymentMode === 'fixed' ? 'selected' : ''; ?>>Cantidad fija</option>
+                </select>
+              </label>
+              <label id="wizard-payment-fixed-wrap" style="<?php echo $wizardPaymentMode === 'fixed' ? '' : 'display:none;'; ?>">
+                Cantidad fija (MXN)
+                <input
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  name="wizard_payment_fixed_amount"
+                  id="wizard-payment-fixed-amount"
+                  value="<?php echo htmlspecialchars($wizardPaymentFixedAmount, ENT_QUOTES, 'UTF-8'); ?>"
+                  placeholder="0.00">
+              </label>
+              <label>Fecha de pago
+                <input
+                  type="date"
+                  name="wizard_payment_date_single"
+                  id="wizard-payment-date-single"
+                  value="<?php echo htmlspecialchars($wizardPaymentDateSingle, ENT_QUOTES, 'UTF-8'); ?>">
+              </label>
+              <label style="grid-column:1 / -1;">Referencia (opcional)
+                <input
+                  type="text"
+                  name="wizard_payment_reference_single"
+                  id="wizard-payment-reference-single"
+                  value="<?php echo htmlspecialchars($wizardPaymentReferenceSingle, ENT_QUOTES, 'UTF-8'); ?>"
+                  placeholder="Referencia / nota corta">
+              </label>
+            </div>
+            <p id="wizard-payment-preview" class="muted" style="margin:8px 0 0;">
+              Se registrara el pago en el mismo folio al crear la reservacion.
+            </p>
+            <?php if (!$wizardPaymentCatalogOptions): ?>
+              <p class="muted" style="margin:8px 0 0;color:#fca5a5;">No hay metodos de pago configurados para esta propiedad.</p>
+            <?php endif; ?>
+          </div>
+        </div>
+        <input type="hidden" name="wizard_payment_confirmed" id="wizard-payment-confirmed" value="0">
+        <?php endif; ?>
+        <?php endif; ?>
+
+      </div></div>
+
+      <div class="form-actions">
+        <button type="submit" class="button-secondary" name="wizard_back" value="1" formnovalidate>Volver a datos</button>
+        <button type="submit" class="button-primary" name="wizard_confirm" value="1">
+          <?php echo ($replaceLodgingMode && $editingReservationId > 0) ? 'Guardar cambio de hospedaje' : ($wizardIsBlockMode ? 'Crear reservaciones' : 'Crear reserva'); ?>
+        </button>
+      </div>
+    <?php endif; ?>
+  </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var lightboxHost = document.getElementById('wizard-lightbox-host');
+  var closeBtn = document.getElementById('wizard-lightbox-close');
+  if (lightboxHost) {
+    document.body.style.overflow = 'hidden';
+    var wizardReturnUrl = <?php echo json_encode($wizardReturnUrl, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+    var closeWizardLightbox = function () {
+      document.body.style.overflow = '';
+      window.location.href = wizardReturnUrl;
+    };
+    if (closeBtn) {
+      closeBtn.addEventListener('click', closeWizardLightbox);
+    }
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        closeWizardLightbox();
+      }
+    });
+  }
+
+  function syncWizardFieldState(label) {
+    if (!label || !label.classList || !label.classList.contains('wizard-field')) return;
+    var field = label.querySelector('select, input, textarea');
+    if (!field) return;
+    var value = '';
+    var hasValue = false;
+    if (field.tagName === 'SELECT') {
+      value = field.value;
+      hasValue = value !== '' && value !== '0';
+    } else if (field.type === 'number') {
+      value = field.value;
+      hasValue = value !== '';
+    } else {
+      value = (field.value || '').trim();
+      hasValue = value !== '';
+    }
+    if (hasValue) {
+      label.classList.remove('is-empty');
+      label.classList.add('is-filled');
+    } else {
+      label.classList.remove('is-filled');
+      label.classList.add('is-empty');
+    }
+  }
+
+  function bindWizardFieldStates() {
+    var labels = Array.prototype.slice.call(document.querySelectorAll('label.wizard-field'));
+    labels.forEach(function (label) {
+      var field = label.querySelector('select, input, textarea');
+      if (!field) return;
+      if (field.dataset.wizardFieldBound === '1') {
+        syncWizardFieldState(label);
+        return;
+      }
+      var handler = function () { syncWizardFieldState(label); };
+      field.addEventListener('change', handler);
+      field.addEventListener('input', handler);
+      field.dataset.wizardFieldBound = '1';
+      syncWizardFieldState(label);
+    });
+  }
+
+  function setupGuestSuggestions(scope) {
+    var suggestions = document.querySelector('[data-guest-suggestions="' + scope + '"]');
+    if (!suggestions) return;
+    var nameInput = document.querySelector('input[data-guest-scope="' + scope + '"][data-guest-field="names"]');
+    var emailInput = document.querySelector('input[data-guest-scope="' + scope + '"][data-guest-field="email"]');
+    var phoneInput = document.querySelector('input[data-guest-scope="' + scope + '"][data-guest-field="phone"]');
+    var lastInput = document.querySelector('input[data-guest-scope="' + scope + '"][data-guest-field="last"]');
+    var maidenInput = document.querySelector('input[data-guest-scope="' + scope + '"][data-guest-field="maiden"]');
+      var prefixSelect = document.querySelector('select[data-guest-scope="' + scope + '"][data-guest-field="prefix"]');
+      var idInput = document.querySelector('input[data-guest-id-field="' + scope + '"]');
+      var unlockBtn = document.getElementById('wizard-guest-unlock');
+      var form = suggestions.closest('form');
+      if (!nameInput || !emailInput || !phoneInput) return;
+
+      var lastQuery = '';
+      var debounceTimer = null;
+      var activeRequest = 0;
+      var suppressClear = false;
+      var guestIdInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="wizard_guest_id"]'));
+      var selectedIdInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="wizard_selected_guest_id"]'));
+
+      function setGuestId(value) {
+        var v = value || '';
+        if (idInput) idInput.value = v;
+        guestIdInputs.forEach(function (field) {
+          field.value = v;
+        });
+        selectedIdInputs.forEach(function (field) {
+          field.value = v;
+        });
+        if (form) form.dataset.selectedGuestId = v;
+      }
+
+    function clearSuggestions() {
+      suggestions.innerHTML = '';
+      suggestions.style.display = 'none';
+    }
+
+    function setLocked(locked) {
+      [nameInput, emailInput, phoneInput, lastInput, maidenInput].forEach(function (field) {
+        if (!field) return;
+        field.readOnly = !!locked;
+        var label = field.closest('label');
+        if (label) label.classList.toggle('is-locked', !!locked);
+      });
+      if (prefixSelect) {
+        prefixSelect.dataset.locked = locked ? '1' : '';
+        if (locked) {
+          prefixSelect.dataset.prevValue = prefixSelect.value || '';
+        } else {
+          delete prefixSelect.dataset.prevValue;
+        }
+        if (locked) {
+          prefixSelect.classList.add('is-locked');
+        } else {
+          prefixSelect.classList.remove('is-locked');
+        }
+      }
+      if (unlockBtn) unlockBtn.style.display = locked ? 'inline-flex' : 'none';
+    }
+
+      function clearGuestSelection() {
+        setGuestId('');
+        nameInput.value = '';
+        emailInput.value = '';
+        phoneInput.value = '';
+      if (lastInput) lastInput.value = '';
+      if (maidenInput) maidenInput.value = '';
+      setLocked(false);
+      clearSuggestions();
+    }
+
+    if (unlockBtn) {
+      unlockBtn.addEventListener('click', function () {
+        clearGuestSelection();
+      });
+    }
+
+    if (prefixSelect) {
+      prefixSelect.addEventListener('change', function (ev) {
+        if (prefixSelect.dataset.locked === '1') {
+          var prev = prefixSelect.dataset.prevValue || '';
+          if (prev !== '') prefixSelect.value = prev;
+          ev.preventDefault();
+        }
+      });
+    }
+
+    function setPhone(value) {
+      var raw = (value || '').trim();
+      if (!raw) {
+        phoneInput.value = '';
+        return;
+      }
+      var match = raw.match(/^(\+\d{1,4})\s*(.*)$/);
+      if (match && prefixSelect) {
+        var prefix = match[1];
+        var rest = match[2] || '';
+        var hasOption = false;
+        Array.prototype.slice.call(prefixSelect.options).forEach(function (opt) {
+          if (opt.value === prefix) hasOption = true;
+        });
+        if (hasOption) prefixSelect.value = prefix;
+        phoneInput.value = rest.trim();
+      } else {
+        phoneInput.value = raw;
+      }
+    }
+
+    function renderSuggestions(list) {
+      if (!list.length) {
+        clearSuggestions();
+        return;
+      }
+      suggestions.innerHTML = '';
+      list.forEach(function (item) {
+        var row = document.createElement('div');
+        row.className = 'guest-suggestion';
+        var info = document.createElement('div');
+        var name = document.createElement('strong');
+        name.textContent = (item.names || '') + (item.last_name ? (' ' + item.last_name) : '');
+        var email = document.createElement('div');
+        email.className = 'muted';
+        email.textContent = item.email || '';
+        info.appendChild(name);
+        info.appendChild(email);
+        var phone = document.createElement('small');
+        phone.textContent = item.phone || '';
+        row.appendChild(info);
+        row.appendChild(phone);
+          row.addEventListener('click', function () {
+            suppressClear = true;
+            nameInput.value = item.names || '';
+            emailInput.value = item.email || '';
+            setPhone(item.phone || '');
+            if (lastInput) lastInput.value = item.last_name || '';
+            if (maidenInput) maidenInput.value = item.maiden_name || '';
+            setGuestId(item.id_guest || '');
+            setLocked(true);
+            clearSuggestions();
+            setTimeout(function () {
+              suppressClear = false;
+            }, 0);
+          });
+        suggestions.appendChild(row);
+      });
+      suggestions.style.display = 'block';
+    }
+
+  function normalizePhone(value) {
+    return String(value || '')
+      .replace(/\s/g, '')
+      .replace(/[^\d+]/g, '')
+      .replace(/^00/, '+');
+  }
+
+  bindWizardFieldStates();
+
+    function tryAutoSelect(list, query, fieldType) {
+      if (!list.length) return false;
+      var q = (query || '').trim();
+      if (q.length < 2) return false;
+      var matched = null;
+      if (fieldType === 'email') {
+        var qLower = q.toLowerCase();
+        matched = list.find(function (item) {
+          return (item.email || '').toLowerCase() === qLower;
+        });
+      } else if (fieldType === 'phone') {
+        var qPhone = normalizePhone(q);
+        matched = list.find(function (item) {
+          return normalizePhone(item.phone || '') === qPhone;
+        });
+      }
+      if (!matched) return false;
+      nameInput.value = matched.names || '';
+      emailInput.value = matched.email || '';
+      setPhone(matched.phone || '');
+        if (lastInput) lastInput.value = matched.last_name || '';
+        if (maidenInput) maidenInput.value = matched.maiden_name || '';
+        setGuestId(matched.id_guest || '');
+        setLocked(true);
+        clearSuggestions();
+        return true;
+      }
+
+    function fetchGuests(query) {
+      if (query.length < 2) {
+        clearSuggestions();
+        return;
+      }
+      lastQuery = query;
+      activeRequest += 1;
+      var requestId = activeRequest;
+      var activeField = (document.activeElement === emailInput) ? 'email'
+        : (document.activeElement === phoneInput) ? 'phone'
+        : (document.activeElement === nameInput) ? 'names'
+        : (document.activeElement === lastInput) ? 'last'
+        : (document.activeElement === maidenInput) ? 'maiden'
+        : '';
+      var guestSearchUrl = (window.pmsBuildUrl ? window.pmsBuildUrl('api/guest_search.php') : 'api/guest_search.php')
+        + '?q=' + encodeURIComponent(query);
+      fetch(guestSearchUrl)
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (payload) {
+          if (!payload || requestId !== activeRequest) return;
+          var results = Array.isArray(payload.results) ? payload.results : [];
+          if ((activeField === 'email' || activeField === 'phone') && tryAutoSelect(results, query, activeField)) return;
+          renderSuggestions(results);
+        })
+        .catch(function () {
+          if (requestId === activeRequest) clearSuggestions();
+        });
+    }
+
+      function onSearchInput(ev) {
+        if (suppressClear) return;
+        if (nameInput.readOnly || emailInput.readOnly || phoneInput.readOnly) return;
+        setGuestId('');
+        setLocked(false);
+        var query = (ev.target.value || '').trim();
+      if (query === lastQuery) return;
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(function () {
+        fetchGuests(query);
+      }, 250);
+    }
+
+    [nameInput, emailInput, phoneInput, lastInput, maidenInput].forEach(function (field) {
+      if (!field) return;
+      field.addEventListener('input', onSearchInput);
+    });
+
+    document.addEventListener('click', function (ev) {
+      if (suggestions.contains(ev.target)) return;
+      if (ev.target === nameInput || ev.target === emailInput || ev.target === phoneInput || ev.target === lastInput || ev.target === maidenInput) return;
+      clearSuggestions();
+    });
+
+    if (idInput && idInput.value && parseInt(idInput.value, 10) > 0) {
+      setLocked(true);
+    }
+  }
+
+  function initWizard() {
+    var form = document.querySelector('.reservation-create-form');
+    if (!form) return;
+    form.addEventListener('change', function (ev) {
+      var target = ev.target;
+      if (!target) return;
+      var label = target.closest('label.wizard-field');
+      if (label) syncWizardFieldState(label);
+    });
+    form.addEventListener('input', function (ev) {
+      var target = ev.target;
+      if (!target) return;
+      var label = target.closest('label.wizard-field');
+      if (label) syncWizardFieldState(label);
+    });
+    form.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Enter') return;
+      var tag = (ev.target && ev.target.tagName) ? ev.target.tagName.toLowerCase() : '';
+      if (tag === 'textarea' || tag === 'select') return;
+      ev.preventDefault();
+    });
+    form.addEventListener('submit', function () {
+      var selectedId = form.dataset.selectedGuestId || '';
+      if (!selectedId) return;
+      var fields = form.querySelectorAll('input[name="wizard_guest_id"]');
+      fields.forEach(function (field) {
+        field.value = selectedId;
+      });
+    });
+    var categoryMap = <?php echo json_encode($categoriesByProp, JSON_UNESCAPED_UNICODE); ?>;
+    var roomMap = <?php echo json_encode($roomsByProp, JSON_UNESCAPED_UNICODE); ?>;
+    var sourceMap = <?php echo json_encode($wizardSourceOptionsByProperty, JSON_UNESCAPED_UNICODE); ?> || {};
+    var propertySelect = form.querySelector('select[name="wizard_property"]');
+    var categorySelect = form.querySelector('select[name="wizard_category"]');
+    var roomSelect = form.querySelector('select[name="wizard_room"]');
+    var sourceSelect = form.querySelector('select[name="wizard_source_id"]');
+    var lastProperty = propertySelect ? (propertySelect.value || '') : '';
+
+    function clearSelect(select, placeholder) {
+      if (!select) return;
+      while (select.options.length) select.remove(0);
+      var opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = placeholder || 'Selecciona una opcion';
+      select.appendChild(opt);
+    }
+
+    function appendOption(select, value, label, selected, attrs) {
+      var opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      if (attrs && typeof attrs === 'object') {
+        Object.keys(attrs).forEach(function (key) {
+          if (attrs[key] === null || attrs[key] === undefined) return;
+          opt.setAttribute(key, String(attrs[key]));
+        });
+      }
+      if (selected) opt.selected = true;
+      select.appendChild(opt);
+      return opt;
+    }
+
+    function normalizeCode(code) {
+      return (code || '').toString().toUpperCase();
+    }
+
+    function buildCategoryLabel(cat) {
+      var ccode = normalizeCode(cat.code || '');
+      var cname = (cat.name || '').toString();
+      return cname ? (ccode + ' - ' + cname) : ccode;
+    }
+
+    function buildRoomLabel(room) {
+      var rcode = normalizeCode(room.code || '');
+      var rname = (room.name || '').toString();
+      return rname ? (rcode + ' - ' + rname) : rcode;
+    }
+
+    function findCategoryIdByCode(prop, categoryCode) {
+      var propertyCode = normalizeCode(prop);
+      var desiredCode = normalizeCode(categoryCode);
+      if (!propertyCode || !desiredCode) return 0;
+      var cats = categoryMap[propertyCode] || [];
+      for (var i = 0; i < cats.length; i += 1) {
+        var cat = cats[i] || {};
+        var ccode = normalizeCode(
+          (cat.code !== undefined ? cat.code : '')
+            || (cat.category_code !== undefined ? cat.category_code : '')
+        );
+        if (ccode !== desiredCode) continue;
+        return parseInt(
+          (cat.id_category !== undefined ? cat.id_category : 0)
+            || (cat.category_id !== undefined ? cat.category_id : 0),
+          10
+        ) || 0;
+      }
+      return 0;
+    }
+
+    function roomMatchesSelectedCategory(room, selectedCategoryCode, selectedCategoryId) {
+      if (!selectedCategoryCode) return true;
+      var roomCategoryCode = normalizeCode(
+        (room && room.category_code !== undefined ? room.category_code : '')
+          || (room && room.category !== undefined ? room.category : '')
+      );
+      if (roomCategoryCode) {
+        return roomCategoryCode === selectedCategoryCode;
+      }
+      var roomCategoryId = parseInt(
+        (room && room.id_category !== undefined ? room.id_category : 0)
+          || (room && room.category_id !== undefined ? room.category_id : 0),
+        10
+      ) || 0;
+      if (selectedCategoryId > 0 && roomCategoryId > 0) {
+        return roomCategoryId === selectedCategoryId;
+      }
+      return false;
+    }
+
+    function findCategoryCodeByRoom(prop, roomCode) {
+      var propertyCode = normalizeCode(prop);
+      var selectedRoomCode = normalizeCode(roomCode);
+      if (!propertyCode || !selectedRoomCode) return '';
+      var rooms = roomMap[propertyCode] || [];
+      var matchedRoom = null;
+      rooms.some(function (room) {
+        var rcode = normalizeCode(room && room.code ? room.code : '');
+        if (rcode === selectedRoomCode) {
+          matchedRoom = room || null;
+          return true;
+        }
+        return false;
+      });
+      if (!matchedRoom) return '';
+
+      var categoryCode = normalizeCode(
+        (matchedRoom.category_code !== undefined ? matchedRoom.category_code : '')
+          || (matchedRoom.category !== undefined ? matchedRoom.category : '')
+      );
+      if (categoryCode) return categoryCode;
+
+      var categoryId = parseInt(
+        (matchedRoom.id_category !== undefined ? matchedRoom.id_category : 0)
+          || (matchedRoom.category_id !== undefined ? matchedRoom.category_id : 0),
+        10
+      ) || 0;
+      if (categoryId <= 0) return '';
+      var cats = categoryMap[propertyCode] || [];
+      for (var i = 0; i < cats.length; i += 1) {
+        var cat = cats[i] || {};
+        var cid = parseInt(
+          (cat.id_category !== undefined ? cat.id_category : 0)
+            || (cat.category_id !== undefined ? cat.category_id : 0),
+          10
+        ) || 0;
+        if (cid !== categoryId) continue;
+        var ccode = normalizeCode(
+          (cat.code !== undefined ? cat.code : '')
+            || (cat.category_code !== undefined ? cat.category_code : '')
+        );
+        if (ccode) return ccode;
+      }
+      return '';
+    }
+
+    function syncCategoryFromRoomSelection() {
+      if (!propertySelect || !categorySelect || !roomSelect) return;
+      var prop = normalizeCode(propertySelect.value);
+      var roomCode = normalizeCode(roomSelect.value);
+      if (!prop || !roomCode) return;
+      var categoryCode = findCategoryCodeByRoom(prop, roomCode);
+      if (!categoryCode) return;
+      for (var i = 0; i < categorySelect.options.length; i += 1) {
+        var option = categorySelect.options[i];
+        if (normalizeCode(option.value) !== categoryCode) continue;
+        if (categorySelect.value !== option.value) {
+          categorySelect.value = option.value;
+        }
+        break;
+      }
+    }
+
+    function populateSourceOptions(prop, currentSourceId) {
+      if (!sourceSelect) return;
+      var desiredId = String(currentSourceId || '').trim();
+      var rows = sourceMap[prop] || [];
+      if (!Array.isArray(rows) || !rows.length) {
+        rows = [{ origin_key: 'source:0', origin_label: 'Directo' }];
+      }
+      while (sourceSelect.options.length) sourceSelect.remove(0);
+      rows.forEach(function (row) {
+        var sourceId = String(row && row.origin_key ? row.origin_key : (row && row.id_reservation_source != null ? ('source:' + String(parseInt(row.id_reservation_source, 10) || 0)) : 'source:0'));
+        var sourceName = String(
+          row && row.origin_label
+            ? row.origin_label
+            : (row && row.source_name ? row.source_name : 'Directo')
+        );
+        appendOption(sourceSelect, String(sourceId), sourceName, sourceId === desiredId);
+      });
+      var hasSelected = false;
+      Array.prototype.forEach.call(sourceSelect.options, function (opt) {
+        if (opt.selected) hasSelected = true;
+      });
+      if (!hasSelected && sourceSelect.options.length) {
+        sourceSelect.options[0].selected = true;
+      }
+    }
+
+    function populateDependentFields(forceReset) {
+      var prop = normalizeCode(propertySelect ? propertySelect.value : '');
+      if (!prop) {
+        clearSelect(categorySelect, 'Selecciona una categoria');
+        clearSelect(roomSelect, 'Selecciona una habitacion');
+        populateSourceOptions('', 0);
+        return;
+      }
+
+      var cats = categoryMap[prop] || [];
+      var rooms = roomMap[prop] || [];
+      var currentCategory = normalizeCode(categorySelect ? categorySelect.value : '');
+      var currentRoom = normalizeCode(roomSelect ? roomSelect.value : '');
+      var currentSource = sourceSelect ? String(sourceSelect.value || '') : '';
+      if (forceReset) {
+        currentCategory = '';
+        currentRoom = '';
+        currentSource = '';
+      }
+
+      clearSelect(categorySelect, 'Selecciona una categoria');
+      var categoryMatched = false;
+      cats.forEach(function (cat) {
+        var ccode = normalizeCode(cat.code || '');
+        if (!ccode) return;
+        var isSelectedCategory = ccode === currentCategory;
+        if (isSelectedCategory) categoryMatched = true;
+        appendOption(categorySelect, ccode, buildCategoryLabel(cat), isSelectedCategory);
+      });
+      if (currentCategory && !categoryMatched) {
+        appendOption(categorySelect, currentCategory, currentCategory, true);
+      }
+
+      var selectedCategoryId = findCategoryIdByCode(prop, currentCategory);
+      clearSelect(roomSelect, 'Selecciona una habitacion');
+      var roomMatched = false;
+      rooms.forEach(function (room) {
+        var rcode = normalizeCode(room.code || '');
+        if (!rcode) return;
+        if (currentCategory && rcode !== currentRoom && !roomMatchesSelectedCategory(room, currentCategory, selectedCategoryId)) {
+          return;
+        }
+        var roomCategoryCode = normalizeCode(
+          (room.category_code !== undefined ? room.category_code : '')
+            || (room.category !== undefined ? room.category : '')
+        );
+        var roomCategoryId = parseInt(
+          (room.id_category !== undefined ? room.id_category : 0)
+            || (room.category_id !== undefined ? room.category_id : 0),
+          10
+        ) || 0;
+        appendOption(
+          roomSelect,
+          rcode,
+          buildRoomLabel(room),
+          rcode === currentRoom,
+          {
+            'data-category-code': roomCategoryCode,
+            'data-category-id': roomCategoryId
+          }
+        );
+        if (rcode === currentRoom) {
+          roomMatched = true;
+        }
+      });
+      if (currentRoom && !roomMatched) {
+        appendOption(roomSelect, currentRoom, currentRoom, true);
+      }
+
+      populateSourceOptions(prop, currentSource);
+      syncCategoryFromRoomSelection();
+    }
+
+    if (propertySelect) {
+      propertySelect.addEventListener('change', function () {
+        var prop = normalizeCode(propertySelect.value);
+        var reset = prop !== normalizeCode(lastProperty);
+        lastProperty = prop;
+        populateDependentFields(reset);
+      });
+      populateDependentFields(false);
+    }
+    if (roomSelect) {
+      roomSelect.addEventListener('change', function () {
+        syncCategoryFromRoomSelection();
+        populateDependentFields(false);
+      });
+    }
+    if (categorySelect) {
+      categorySelect.addEventListener('change', function () {
+        populateDependentFields(false);
+      });
+    }
+    setupGuestSuggestions('wizard');
+    var breakdownInputs = Array.prototype.slice.call(form.querySelectorAll('.nightly-amount-input'));
+    var blockCards = Array.prototype.slice.call(form.querySelectorAll('.wizard-block-breakdown-card'));
+    var isBlockBreakdownMode = blockCards.length > 0;
+    var avgField = document.getElementById('wizard-avg-night');
+    var sumField = document.getElementById('wizard-total-sum');
+    var grandWrap = document.getElementById('wizard-grand-total-wrap');
+    var grandField = document.getElementById('wizard-grand-total');
+    var fixedTotal = document.getElementById('wizard-fixed-total');
+    var fixedAvg = document.getElementById('wizard-fixed-avg');
+    var lodgingSelect = document.getElementById('wizard-lodging-concept');
+    var childRow = document.getElementById('wizard-child-row');
+    var childList = document.getElementById('wizard-child-list');
+    var childTemplate = document.getElementById('wizard-child-template');
+    var includePaymentCheckbox = document.getElementById('wizard-include-payment');
+    var paymentFieldsWrap = document.getElementById('wizard-payment-fields');
+    var paymentModeSelect = document.getElementById('wizard-payment-mode');
+    var paymentMethodSelect = document.getElementById('wizard-payment-method-single');
+    var paymentFixedWrap = document.getElementById('wizard-payment-fixed-wrap');
+    var paymentFixedInput = document.getElementById('wizard-payment-fixed-amount');
+    var paymentPreview = document.getElementById('wizard-payment-preview');
+    var paymentConfirmedInput = document.getElementById('wizard-payment-confirmed');
+    var initialMainChildCatalogIds = <?php echo json_encode(array_values($wizardChildCatalogIds), JSON_UNESCAPED_UNICODE); ?>;
+    var initialMainChildParentCatalogIds = <?php echo json_encode(array_values($wizardChildParentCatalogIds), JSON_UNESCAPED_UNICODE); ?>;
+    var initialMainChildTotals = <?php echo json_encode(array_values($wizardChildTotals), JSON_UNESCAPED_UNICODE); ?>;
+    var fixedChildrenByParentMap = <?php echo json_encode($wizardFixedChildrenByParent, JSON_UNESCAPED_UNICODE); ?> || {};
+    var mainChildStateByPair = {};
+    if (Array.isArray(initialMainChildCatalogIds)) {
+      initialMainChildCatalogIds.forEach(function (catalogId, idx) {
+        var cid = parseInt(catalogId || '0', 10) || 0;
+        if (!cid) return;
+        var pid = Array.isArray(initialMainChildParentCatalogIds) ? (parseInt(initialMainChildParentCatalogIds[idx] || '0', 10) || 0) : 0;
+        var pairKey = String(pid) + ':' + String(cid);
+        mainChildStateByPair[pairKey] = {
+          total: Array.isArray(initialMainChildTotals) ? (initialMainChildTotals[idx] || '') : ''
+        };
+      });
+    }
+    var isSyncingTotals = false;
+
+    function normalizeNumber(raw) {
+      var cleaned = String(raw || '').trim().replace(/\s/g, '');
+      var comma = cleaned.lastIndexOf(',');
+      var dot = cleaned.lastIndexOf('.');
+      if (comma !== -1 && dot !== -1) {
+        if (comma > dot) {
+          cleaned = cleaned.replace(/\./g, '');
+          cleaned = cleaned.replace(',', '.');
+        } else {
+          cleaned = cleaned.replace(/,/g, '');
+        }
+      } else if (comma !== -1) {
+        cleaned = cleaned.replace(',', '.');
+      }
+      cleaned = cleaned.replace(/[^0-9.-]/g, '');
+      return cleaned;
+    }
+
+    function parseVal(input, strict) {
+      var raw = String(input.value || '').trim();
+      if (raw === '') return strict ? null : 0;
+      var normalized = normalizeNumber(raw);
+      if (normalized === '' || normalized === '-' || normalized === '.' || normalized === '-.') {
+        return strict ? null : 0;
+      }
+      var v = parseFloat(normalized);
+      return isNaN(v) ? (strict ? null : 0) : v;
+    }
+
+    function toCents(amount) {
+      if (amount === null || amount === undefined || !isFinite(amount)) return 0;
+      return Math.round(amount * 100);
+    }
+
+    function parseAmountRaw(raw) {
+      var normalized = normalizeNumber(raw);
+      if (normalized === '' || normalized === '-' || normalized === '.' || normalized === '-.') {
+        return 0;
+      }
+      var value = parseFloat(normalized);
+      return isNaN(value) ? 0 : value;
+    }
+
+    function formatMoney(amount) {
+      var n = isFinite(amount) ? amount : 0;
+      return (Math.round(n * 100) / 100).toFixed(2);
+    }
+
+    function getCurrentEstimatedGrandTotal() {
+      if (grandField) {
+        return parseAmountRaw(grandField.value || '0');
+      }
+      if (sumField) {
+        return parseAmountRaw(sumField.value || '0');
+      }
+      return 0;
+    }
+
+    function syncPaymentUi() {
+      if (!includePaymentCheckbox) return;
+      var includePayment = !!includePaymentCheckbox.checked;
+      if (paymentFieldsWrap) {
+        paymentFieldsWrap.style.display = includePayment ? 'block' : 'none';
+      }
+      if (!includePayment) {
+        if (paymentConfirmedInput) paymentConfirmedInput.value = '0';
+        return;
+      }
+
+      var mode = paymentModeSelect ? String(paymentModeSelect.value || 'full') : 'full';
+      var isFixed = mode === 'fixed';
+      if (paymentFixedWrap) {
+        paymentFixedWrap.style.display = isFixed ? '' : 'none';
+      }
+      if (paymentFixedInput) {
+        paymentFixedInput.disabled = !isFixed;
+      }
+      var amount = isFixed
+        ? parseAmountRaw(paymentFixedInput ? paymentFixedInput.value : '0')
+        : getCurrentEstimatedGrandTotal();
+      if (paymentPreview) {
+        if (isFixed) {
+          paymentPreview.textContent = 'Se registrara un pago inicial de $' + formatMoney(amount) + ' MXN en el folio principal.';
+        } else {
+          paymentPreview.textContent = 'Se registrara un pago completo por el saldo final real del folio despues de calcular todos los cargos.';
+        }
+      }
+      if (paymentConfirmedInput) {
+        paymentConfirmedInput.value = '0';
+      }
+    }
+
+    function setBreakdownFromCents(centsByNight) {
+      if (!Array.isArray(centsByNight) || !centsByNight.length || !breakdownInputs.length) return false;
+      breakdownInputs.forEach(function (inp, idx) {
+        var cents = idx < centsByNight.length ? (parseInt(centsByNight[idx], 10) || 0) : 0;
+        if (cents < 0) cents = 0;
+        inp.value = (cents / 100).toFixed(2);
+      });
+      return true;
+    }
+
+    function distributeTotalCents(totalCents, count) {
+      var parts = [];
+      if (!count || totalCents < 0) return parts;
+      var base = Math.floor(totalCents / count);
+      var remainder = totalCents - (base * count);
+      for (var i = 0; i < count; i += 1) {
+        parts.push(base + (i < remainder ? 1 : 0));
+      }
+      return parts;
+    }
+
+    function refreshChildTotals(count) {
+      if (!childRow || !childList || childRow.style.display === 'none') return;
+      childList.querySelectorAll('.wizard-child-item').forEach(function (item) {
+        var totalInput = item.querySelector('.wizard-child-total');
+        if (!totalInput) return;
+        var totalVal = parseVal(totalInput);
+        if (isNaN(totalVal) || totalVal < 0) {
+          totalInput.value = '0.00';
+        }
+      });
+    }
+
+    function parseFixedChildrenFromOption(opt) {
+      if (!opt) return [];
+      var raw = opt.getAttribute('data-fixed-children') || '[]';
+      raw = String(raw || '')
+        .replace(/&quot;/g, '"')
+        .replace(/&#039;/g, "'")
+        .replace(/&amp;/g, '&');
+      try {
+        var parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function normalizeFixedChild(rawChild) {
+      var childId = parseInt(rawChild && rawChild.id ? rawChild.id : 0, 10) || 0;
+      if (!childId) return null;
+      return {
+        id: childId,
+        name: String(rawChild && rawChild.name ? rawChild.name : '').trim(),
+        label: String(rawChild && (rawChild.label || rawChild.name) ? (rawChild.label || rawChild.name) : '').trim(),
+        default_cents: parseInt(rawChild && rawChild.default_cents ? rawChild.default_cents : 0, 10) || 0,
+        parent_catalog_id: parseInt(rawChild && rawChild.parent_catalog_id ? rawChild.parent_catalog_id : 0, 10) || 0
+      };
+    }
+
+    function getFixedChildrenForParent(parentCatalogId, selectedOption) {
+      var parentId = parseInt(parentCatalogId || '0', 10) || 0;
+      if (!parentId) return [];
+      var byId = {};
+      var fromMap = fixedChildrenByParentMap && fixedChildrenByParentMap[parentId] ? fixedChildrenByParentMap[parentId] : [];
+      if (Array.isArray(fromMap)) {
+        fromMap.forEach(function (rawChild) {
+          var child = normalizeFixedChild(rawChild);
+          if (!child || child.id <= 0) return;
+          byId[child.id] = child;
+        });
+      }
+      if (selectedOption) {
+        var optionParentId = parseInt(selectedOption.value || '0', 10) || 0;
+        if (optionParentId === parentId) {
+          parseFixedChildrenFromOption(selectedOption).forEach(function (rawChild) {
+            var child = normalizeFixedChild(rawChild);
+            if (!child || child.id <= 0 || byId[child.id]) return;
+            byId[child.id] = child;
+          });
+        }
+      }
+      return Object.keys(byId).map(function (key) { return byId[key]; });
+    }
+
+    function buildFixedChildrenTree(rootCatalogId, selectedOption) {
+      var rootId = parseInt(rootCatalogId || '0', 10) || 0;
+      if (!rootId) return [];
+
+      function walk(parentId, depth, pathSet) {
+        var branch = [];
+        var children = getFixedChildrenForParent(parentId, selectedOption);
+        children.forEach(function (child) {
+          var childId = parseInt(child.id || '0', 10) || 0;
+          if (!childId) return;
+          if (pathSet[childId]) return;
+          var node = {
+            id: childId,
+            label: child.label || child.name || ('Catalog#' + String(childId)),
+            name: child.name || child.label || ('Catalog#' + String(childId)),
+            default_cents: parseInt(child.default_cents || '0', 10) || 0,
+            depth: depth,
+            parent_catalog_id: parentId,
+            children: []
+          };
+          var nextPathSet = {};
+          Object.keys(pathSet).forEach(function (k) { nextPathSet[k] = true; });
+          nextPathSet[childId] = true;
+          node.children = walk(childId, depth + 1, nextPathSet);
+          branch.push(node);
+        });
+        return branch;
+      }
+
+      var initialPath = {};
+      initialPath[rootId] = true;
+      return walk(rootId, 0, initialPath);
+    }
+
+    function flattenFixedChildrenTree(nodes, out) {
+      if (!Array.isArray(nodes)) return out || [];
+      var target = Array.isArray(out) ? out : [];
+      nodes.forEach(function (node) {
+        target.push(node);
+        if (Array.isArray(node.children) && node.children.length) {
+          flattenFixedChildrenTree(node.children, target);
+        }
+      });
+      return target;
+    }
+
+    function snapshotMainChildState() {
+      if (!childList) return;
+      childList.querySelectorAll('.wizard-child-item').forEach(function (item) {
+        var catalogInput = item.querySelector('.wizard-child-catalog-id');
+        var parentInput = item.querySelector('.wizard-child-parent-catalog-id');
+        var totalInput = item.querySelector('.wizard-child-total');
+        var childId = catalogInput ? (parseInt(catalogInput.value || '0', 10) || 0) : 0;
+        var parentId = parentInput ? (parseInt(parentInput.value || '0', 10) || 0) : 0;
+        if (!childId) return;
+        var pairKey = String(parentId) + ':' + String(childId);
+        mainChildStateByPair[pairKey] = {
+          total: totalInput ? String(totalInput.value || '') : ''
+        };
+      });
+    }
+
+    function renderMainChildRows() {
+      if (!lodgingSelect || !childRow || !childList || !childTemplate) return;
+      var opt = lodgingSelect.options[lodgingSelect.selectedIndex];
+      var rootCatalogId = parseInt(lodgingSelect.value || '0', 10) || 0;
+      var fixedTree = buildFixedChildrenTree(rootCatalogId, opt);
+      var fixedChildren = flattenFixedChildrenTree(fixedTree, []).filter(function (child) {
+        var childId = parseInt(child && child.id ? child.id : 0, 10) || 0;
+        return childId > 0;
+      });
+      childList.innerHTML = '';
+      if (!fixedChildren.length) {
+        childRow.style.display = 'none';
+        return;
+      }
+      childRow.style.display = 'block';
+      function renderNode(child) {
+        var frag = childTemplate.content.cloneNode(true);
+        var item = frag.querySelector('.wizard-child-item');
+        if (!item) return;
+        var childId = parseInt(child.id || '0', 10) || 0;
+        var childName = String((child.label || child.name || '')).trim();
+        var defaultNightly = (parseInt(child.default_cents || '0', 10) || 0) / 100;
+        var depth = parseInt(child.depth || 0, 10) || 0;
+        var title = item.querySelector('.wizard-child-title');
+        var totalInput = item.querySelector('.wizard-child-total');
+        var catalogIdInput = item.querySelector('.wizard-child-catalog-id');
+        var parentCatalogIdInput = item.querySelector('.wizard-child-parent-catalog-id');
+        if (title) {
+          var depthPrefix = depth > 0 ? new Array(depth + 1).join('\u2014 ') : '';
+          title.textContent = childName !== '' ? ('Derivados ' + depthPrefix + childName) : 'Derivados';
+          title.style.paddingLeft = String(depth * 16) + 'px';
+        }
+        item.style.marginLeft = String(depth * 12) + 'px';
+        if (catalogIdInput) {
+          catalogIdInput.value = String(childId);
+        }
+        var parentId = parseInt(child.parent_catalog_id || '0', 10) || 0;
+        if (parentCatalogIdInput) {
+          parentCatalogIdInput.value = String(parentId);
+        }
+        var pairKey = String(parentId) + ':' + String(childId);
+        var saved = mainChildStateByPair[pairKey] || null;
+        if (totalInput) {
+          if (saved && String(saved.total || '').trim() !== '') {
+            totalInput.value = String(saved.total);
+          } else {
+            totalInput.value = defaultNightly.toFixed(2);
+          }
+        }
+        childList.appendChild(frag);
+        if (Array.isArray(child.children) && child.children.length) {
+          child.children.forEach(renderNode);
+        }
+      }
+      fixedTree.forEach(renderNode);
+      refreshChildTotals(breakdownInputs.length);
+    }
+
+    function refreshBlockBreakdownTotals() {
+      var grandTotalCents = 0;
+      blockCards.forEach(function (card) {
+        var blockInputs = Array.prototype.slice.call(card.querySelectorAll('.nightly-amount-input'));
+        var blockTotalCents = 0;
+        blockInputs.forEach(function (inp) {
+          blockTotalCents += toCents(parseVal(inp));
+        });
+        var blockAvgCents = blockInputs.length ? Math.round(blockTotalCents / blockInputs.length) : 0;
+        var totalField = card.querySelector('[data-block-total]');
+        var avgFieldLocal = card.querySelector('[data-block-avg]');
+        if (totalField) {
+          totalField.value = (blockTotalCents / 100).toFixed(2);
+        }
+        if (avgFieldLocal) {
+          avgFieldLocal.value = (blockAvgCents / 100).toFixed(2);
+        }
+        grandTotalCents += blockTotalCents;
+      });
+      if (grandWrap) {
+        grandWrap.style.display = blockCards.length ? 'block' : 'none';
+      }
+      if (grandField) {
+        grandField.value = (grandTotalCents / 100).toFixed(2);
+      }
+      syncPaymentUi();
+      return {
+        sum: grandTotalCents / 100,
+        count: breakdownInputs.length,
+        avg: breakdownInputs.length ? (grandTotalCents / 100) / breakdownInputs.length : 0
+      };
+    }
+
+    function refreshTotals(forceUpdate) {
+      if (isBlockBreakdownMode) {
+        return refreshBlockBreakdownTotals();
+      }
+      var sumCents = 0;
+      breakdownInputs.forEach(function (inp) {
+        sumCents += toCents(parseVal(inp));
+      });
+      var count = breakdownInputs.length;
+      var avgCents = count ? Math.round(sumCents / count) : 0;
+      var sum = sumCents / 100;
+      var avg = avgCents / 100;
+      if (avgField && (forceUpdate || document.activeElement !== avgField)) {
+        avgField.value = avg.toFixed(2);
+      }
+      if (sumField && (forceUpdate || document.activeElement !== sumField)) {
+        sumField.value = sum.toFixed(2);
+      }
+      if (fixedAvg) fixedAvg.value = avg.toFixed(2);
+      refreshChildTotals(count);
+      var grandTotalCents = sumCents;
+      if (childList) {
+        childList.querySelectorAll('.wizard-child-total').forEach(function (input) {
+          grandTotalCents += toCents(parseVal(input));
+        });
+      }
+      var selectedConcepts = 0;
+      if (lodgingSelect && String(lodgingSelect.value || '').trim() !== '') {
+        selectedConcepts++;
+      }
+      if (grandWrap) {
+        grandWrap.style.display = selectedConcepts > 1 ? 'block' : 'none';
+      }
+      if (grandField) {
+        grandField.value = (grandTotalCents / 100).toFixed(2);
+      }
+      syncPaymentUi();
+      return {sum:sum,count:count,avg:avg};
+    }
+
+    function applyAvgToBreakdown() {
+      if (!avgField || !breakdownInputs.length) return;
+      var avg = parseVal(avgField, true);
+      if (avg === null) return;
+      var count = breakdownInputs.length;
+      var nightlyCents = toCents(avg);
+      if (nightlyCents < 0) return;
+      var targetTotalCents = nightlyCents * count;
+      if (sumField) {
+        var existingSum = parseVal(sumField, true);
+        if (existingSum !== null) {
+          var existingSumCents = toCents(existingSum);
+          // Si la diferencia es pequena por redondeo, conserva el total capturado.
+          if (Math.abs(existingSumCents - targetTotalCents) <= 10) {
+            targetTotalCents = existingSumCents;
+          }
+        }
+      }
+      setBreakdownFromCents(distributeTotalCents(targetTotalCents, count));
+      refreshTotals();
+    }
+
+    function applySumToBreakdown() {
+      if (!sumField || !breakdownInputs.length) return;
+      var total = parseVal(sumField, true);
+      if (total === null) return;
+      var totalCents = toCents(total);
+      if (totalCents < 0) return;
+      setBreakdownFromCents(distributeTotalCents(totalCents, breakdownInputs.length));
+      refreshTotals();
+    }
+
+    function setActiveTab() {
+      refreshTotals(true);
+    }
+
+    breakdownInputs.forEach(function (inp) {
+      inp.addEventListener('input', refreshTotals);
+    });
+    function bindEditableTotals(field, handler) {
+      if (!field) return;
+      field.addEventListener('input', handler);
+      field.addEventListener('blur', handler);
+      field.addEventListener('change', handler);
+      field.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          handler();
+        }
+      });
+    }
+
+    bindEditableTotals(avgField, function () {
+      if (isSyncingTotals) return;
+      isSyncingTotals = true;
+      applyAvgToBreakdown();
+      isSyncingTotals = false;
+    });
+    bindEditableTotals(sumField, function () {
+      if (isSyncingTotals) return;
+      isSyncingTotals = true;
+      applySumToBreakdown();
+      isSyncingTotals = false;
+    });
+    if (childList) {
+      childList.addEventListener('input', function (event) {
+        var target = event.target;
+        if (!target) return;
+        if (target.classList.contains('wizard-child-total')) {
+          refreshTotals();
+        }
+      });
+    }
+
+    if (includePaymentCheckbox) {
+      includePaymentCheckbox.addEventListener('change', syncPaymentUi);
+    }
+    if (paymentModeSelect) {
+      paymentModeSelect.addEventListener('change', syncPaymentUi);
+    }
+    if (paymentFixedInput) {
+      paymentFixedInput.addEventListener('input', syncPaymentUi);
+      paymentFixedInput.addEventListener('blur', function () {
+        var current = parseAmountRaw(paymentFixedInput.value);
+        paymentFixedInput.value = current > 0 ? formatMoney(current) : '';
+        syncPaymentUi();
+      });
+    }
+    if (paymentMethodSelect) {
+      paymentMethodSelect.addEventListener('change', function () {
+        if (paymentConfirmedInput) paymentConfirmedInput.value = '0';
+      });
+    }
+
+    form.addEventListener('submit', function (event) {
+      var submitter = event.submitter || document.activeElement;
+      if (!submitter || String(submitter.name || '') !== 'wizard_confirm') {
+        return;
+      }
+      if (!includePaymentCheckbox || !includePaymentCheckbox.checked) {
+        if (paymentConfirmedInput) paymentConfirmedInput.value = '0';
+        return;
+      }
+      if (paymentMethodSelect && String(paymentMethodSelect.value || '').trim() === '') {
+        event.preventDefault();
+        window.alert('Selecciona un metodo de pago.');
+        return;
+      }
+
+      var mode = paymentModeSelect ? String(paymentModeSelect.value || 'full') : 'full';
+      var amount = 0;
+      if (mode === 'fixed') {
+        amount = parseAmountRaw(paymentFixedInput ? paymentFixedInput.value : '0');
+        if (!(amount > 0)) {
+          event.preventDefault();
+          window.alert('Captura una cantidad valida para el pago inicial.');
+          return;
+        }
+      }
+
+      var message = mode === 'fixed'
+        ? ('Se creara un pago inicial de $' + formatMoney(amount) + ' MXN en el folio de la reservacion.\n\nConfirmar?')
+        : ('Se creara un pago completo por el saldo final real del folio despues de calcular todos los cargos.\n\nConfirmar?');
+      if (!window.confirm(message)) {
+        event.preventDefault();
+        return;
+      }
+      if (paymentConfirmedInput) {
+        paymentConfirmedInput.value = '1';
+      }
+    });
+
+    setActiveTab();
+
+    function syncChildFromSelection() {
+      snapshotMainChildState();
+      renderMainChildRows();
+      refreshTotals(true);
+    }
+
+    if (lodgingSelect) {
+      lodgingSelect.addEventListener('change', function () {
+        syncChildFromSelection();
+        bindWizardFieldStates();
+      });
+      syncChildFromSelection();
+      bindWizardFieldStates();
+    }
+
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initWizard);
+  } else {
+    initWizard();
+  }
+})();
+</script>
+<?php
+$wizardMobileModule = __DIR__ . '/reservation_wizard_mobile.php';
+if (is_file($wizardMobileModule)) {
+    require $wizardMobileModule;
+}
+?>
+
