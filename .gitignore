@@ -18,6 +18,9 @@ config.local.php
 config.php.local
 *.pem
 *.key
+PMS/public_html/pms db connections/config.php
+PMS/public_html/ai tunnel/config.php
+vivelavibe.pxm.com.mx/credentials.js
 
 # Node
 node_modules/
