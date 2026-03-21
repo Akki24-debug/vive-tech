@@ -544,6 +544,56 @@ if ($categories) {
     $categories = $uniqueCategories;
 }
 
+if ($categories) {
+    $categoryAmenityIds = array();
+    foreach ($categories as $categoryRow) {
+        $categoryId = isset($categoryRow['id_category']) ? (int)$categoryRow['id_category'] : 0;
+        if ($categoryId > 0) {
+            $categoryAmenityIds[$categoryId] = true;
+        }
+    }
+    if ($categoryAmenityIds) {
+        try {
+            $pdo = isset($pdo) ? $pdo : pms_get_connection();
+            $categoryIdList = array_keys($categoryAmenityIds);
+            $placeholders = implode(',', array_fill(0, count($categoryIdList), '?'));
+            $amenitySelect = array('rc.id_category');
+            foreach ($amenityFields as $amenityKey => $_amenityLabel) {
+                $amenitySelect[] = 'COALESCE(ca.' . $amenityKey . ', 0) AS ' . $amenityKey;
+            }
+            $stmt = $pdo->prepare(
+                'SELECT ' . implode(",\n                    ", $amenitySelect) . '
+                 FROM roomcategory rc
+                 LEFT JOIN category_amenities ca
+                   ON ca.id_category = rc.id_category
+                  AND ca.deleted_at IS NULL
+                  AND ca.is_active = 1
+                 WHERE rc.id_category IN (' . $placeholders . ')'
+            );
+            $stmt->execute($categoryIdList);
+            $amenityRows = $stmt->fetchAll();
+            $amenityByCategoryId = array();
+            foreach ($amenityRows as $amenityRow) {
+                $categoryId = isset($amenityRow['id_category']) ? (int)$amenityRow['id_category'] : 0;
+                if ($categoryId > 0) {
+                    $amenityByCategoryId[$categoryId] = $amenityRow;
+                }
+            }
+            foreach ($categories as &$categoryRow) {
+                $categoryId = isset($categoryRow['id_category']) ? (int)$categoryRow['id_category'] : 0;
+                if ($categoryId <= 0 || !isset($amenityByCategoryId[$categoryId])) {
+                    continue;
+                }
+                foreach ($amenityFields as $amenityKey => $_amenityLabel) {
+                    $categoryRow[$amenityKey] = !empty($amenityByCategoryId[$categoryId][$amenityKey]) ? 1 : 0;
+                }
+            }
+            unset($categoryRow);
+        } catch (Exception $e) {
+        }
+    }
+}
+
 $propertyMetaByCode = array();
 foreach ($properties as $propertyRow) {
     $propertyCodeRow = isset($propertyRow['code']) ? strtoupper(trim((string)$propertyRow['code'])) : '';

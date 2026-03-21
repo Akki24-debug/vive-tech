@@ -1,0 +1,41 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Logs / temp
+*.log
+*.tmp
+*.temp
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+config.local.php
+config.php.local
+*.pem
+*.key
+public_html/pms db connections/config.php
+public_html/ai tunnel/config.php
+
+# Node
+node_modules/
+dist/
+build/
+coverage/
+
+# PHP / Composer
+vendor/
+.phpunit.result.cache
+
+# Python
+__pycache__/
+*.pyc
+
+# Portable artifacts
+*.zip
+*.rar
+*.7z

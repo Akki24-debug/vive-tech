@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "system_blueprint": {
+    "goal": "Construir un sistema local de analisis y reparacion de errores asistido por IA, empezando por conocimiento estructurado y casos reales.",
+    "assistant_role": "Actua como un analista tecnico riguroso. Resume hechos confirmados, separa hipotesis, prioriza pasos de bajo riesgo y deja aprendizaje reutilizable para proximos casos.",
+    "workflow": [
+      "Ingerir el caso actual con sintomas, entorno, evidencia y pruebas ya realizadas.",
+      "Normalizar el caso en campos claros para no perder contexto entre sesiones.",
+      "Buscar patrones reutilizables en la base de casos conocida.",
+      "Proponer diagnosticos y reparaciones empezando por las acciones menos riesgosas.",
+      "Registrar el resultado real de cada accion para evitar repetir pasos sin valor.",
+      "Convertir el resultado final en conocimiento entrenable y reusable."
+    ],
+    "safety_rules": [
+      "No inventar causas raiz ni drivers implicados sin evidencia.",
+      "Distinguir siempre entre hecho observado, inferencia y recomendacion.",
+      "Avisar cuando un paso pueda ser destructivo o requiera privilegios elevados.",
+      "Priorizar diagnostico reversible antes de cambios permanentes.",
+      "No prometer reparacion definitiva cuando solo hay mitigacion parcial."
+    ],
+    "case_fields": [
+      "problem_summary",
+      "symptoms",
+      "reproduction_pattern",
+      "environment_notes",
+      "evidence",
+      "actions_taken",
+      "results",
+      "working_theories",
+      "next_steps",
+      "lessons"
+    ]
+  },
+  "cases": [
+    {
+      "id": "asus-ai-suite-restart-bsod",
+      "title": "ASUS AI Suite residual errors and BSOD during restart",
+      "system": "Windows desktop support",
+      "status": "partially-stabilized",
+      "tags": [
+        "windows",
+        "asus",
+        "ai-suite",
+        "driver-cleanup",
+        "bsod",
+        "restart-only"
+      ],
+      "outcome": "Startup popup errors appear resolved after deeper cleanup. BSOD still reproduces once during restart but not during cold shutdown and next power-on.",
+      "problem_summary": "The machine had residual ASUS AI Suite components after cleanup. Windows could boot, but there were startup popup errors and a BSOD that happened during restart/shutdown transition rather than cold boot.",
+      "symptoms": "Observed messages included 'Can't open AsIO.sys!! (2)' and 'Clase no registrada, ProgID: aaHM.apiHmData2'. After additional cleanup, the startup messages appear gone. The BSOD still happens consistently on restart, but not on power off followed by manual boot.",
+      "reproduction_pattern": "BSOD occurs during restart flow. It does not appear when shutting down and then powering on manually. Startup popup errors were previously visible after login and now appear resolved.",
+      "environment_notes": "Windows desktop with old ASUS AI Suite residue. Cleanup scripts were run as administrator from the local repo. The case evolved over multiple reboots.",
+      "evidence": "Visual popup errors pointed to missing AsIO.sys and missing COM registration for aaHM.apiHmData2. The cleanup review found remaining ASUS start menu residue and gaps in startup/task cleanup coverage. User feedback clarified the BSOD timing was restart-only.",
+      "actions_taken": "Expanded the cleanup script to remove more startup entries, scheduled tasks, start menu residue and extra ASUS/aaHM registry references. Added a residue checker. Re-ran cleanup and validated that startup errors seem resolved.",
+      "results": "User no longer reports the startup popups. Remaining issue is the restart-only BSOD, which suggests a service or driver teardown problem rather than a boot-time load failure.",
+      "working_theories": "Likely a driver or service still destabilizes Windows during shutdown/restart unloading. The cleared startup errors were a residue problem, but the BSOD may still involve a lower-level driver path that is only triggered during restart.",
+      "next_steps": "Capture exact bugcheck code or inspect the latest minidump. Correlate with restart-phase drivers or services rather than login startup entries. Avoid assuming boot failure when the system can start normally.",
+      "lessons": "Differentiate startup errors from restart-time BSODs. When uninstall residue points to missing files and missing COM classes, clean startup surfaces and scheduled tasks first. If BSOD only happens on restart, prioritize teardown/unload hypotheses over boot hypotheses."
+    }
+  ]
+}

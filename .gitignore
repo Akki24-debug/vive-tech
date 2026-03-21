@@ -42,6 +42,12 @@ __pycache__/
 *.tar
 *.gz
 *.rar
+PMS/Backups/
+PMS/bd pms/Codex Installer.exe
+PMS/bd pms/Microsoft.Services.Store.winmd
+tools/windows/logs/
+tools/windows/mariadb-backups/
+tools/windows/downloads/mariadb-11.8.3-extract/
 
 # Local portable tools binaries
 tools/php/
