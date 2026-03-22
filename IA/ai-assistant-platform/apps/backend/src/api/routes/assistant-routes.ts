@@ -6,10 +6,11 @@ import { ApplicationServices } from "../../shared/service-container";
 
 const assistantRequestSchema = z.object({
   tenantId: z.string().min(1),
+  target: z.enum(["business_brain", "pms"]),
   companyCode: z.string().min(1),
   conversationId: z.string().min(1),
   userId: z.string().min(1),
-  actorUserId: z.number().int().positive(),
+  actorUserId: z.number().int().nonnegative(),
   message: z.string().min(1),
   propertyCode: z.string().optional(),
   locale: z.string().optional(),
@@ -23,9 +24,12 @@ export function createAssistantRoutes(services: ApplicationServices): Router {
 
   router.get(
     "/actions",
-    asyncRoute(async (_request, response) => {
+    asyncRoute(async (request, response) => {
+      const target = z
+        .enum(["business_brain", "pms"])
+        .parse(request.query.target ?? "business_brain");
       response.json({
-        actions: services.listActionCatalog()
+        actions: services.listActionCatalog(target)
       });
     })
   );

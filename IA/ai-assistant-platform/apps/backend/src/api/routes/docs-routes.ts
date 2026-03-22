@@ -1,5 +1,7 @@
 import { Router } from "express";
 
+import { z } from "zod";
+
 import { asyncRoute } from "../../shared/async-route";
 import { ApplicationServices } from "../../shared/service-container";
 
@@ -10,7 +12,10 @@ export function createDocsRoutes(services: ApplicationServices): Router {
     "/docs",
     asyncRoute(async (request, response) => {
       const includeContent = request.query.includeContent === "true";
-      const documents = await services.documentationService.listDocuments(includeContent);
+      const target = z
+        .enum(["business_brain", "pms"])
+        .parse(request.query.target ?? "business_brain");
+      const documents = await services.documentationService.listDocuments(target, includeContent);
       response.json({
         documents
       });

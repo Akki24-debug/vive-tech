@@ -56,24 +56,27 @@ export class WhatsAppService {
     }
 
     const config = await this.runtimeConfigService.getDecryptedConfig();
+    const target = config.defaultTarget;
+    const domain = config.domains[target];
     const request: AssistantRequest = {
       tenantId: config.tenantId,
-      companyCode: config.assistant.companyCode,
+      target,
+      companyCode: domain.assistant.companyCode,
       conversationId: `whatsapp_${message.from}`,
       userId: message.from,
-      actorUserId: config.assistant.whatsappActorUserId,
+      actorUserId: domain.assistant.whatsappActorUserId,
       message: message.text.body,
-      propertyCode: config.assistant.defaultPropertyCode,
+      propertyCode: domain.assistant.defaultPropertyCode,
       channel: "whatsapp",
-      roles: this.parseCsv(config.assistant.whatsappRolesCsv),
-      permissions: this.parseCsv(config.assistant.whatsappPermissionsCsv),
-      locale: config.assistant.defaultLocale
+      roles: this.parseCsv(domain.assistant.whatsappRolesCsv),
+      permissions: this.parseCsv(domain.assistant.whatsappPermissionsCsv),
+      locale: domain.assistant.defaultLocale
     };
 
     await this.activityLogService.info("whatsapp.webhook.received", "Processing inbound WhatsApp message.", {
       from: message.from,
       conversationId: request.conversationId
-    });
+    }, target);
 
     const response = await this.assistantOrchestrator.handleUserMessage(request);
 

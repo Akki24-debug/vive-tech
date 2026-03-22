@@ -30,17 +30,30 @@ export class ActionPolicyEngine {
       });
     }
 
-    const definition = getActionDefinition(proposal.action);
+    const domainConfig = runtimeConfig.domains[request.target];
+
+    if (!domainConfig.enabled) {
+      throw new ConfigurationError(`The target domain ${request.target} is disabled.`, {
+        target: request.target
+      });
+    }
+
+    const definition = getActionDefinition(request.target, proposal.action);
 
     if (!definition) {
       throw new ValidationError("The proposed action is not registered in the backend catalog.", {
-        action: proposal.action
+        action: proposal.action,
+        target: request.target
       });
     }
 
     this.authorizationService.assertActionAllowed(request, definition.requiredPermissions);
 
     const parsedArguments = definition.argsSchema.parse(proposal.arguments);
+
+    if (request.target === "pms" && request.actorUserId <= 0 && definition.executable) {
+      throw new ValidationError("PMS actions require a positive actor user id.");
+    }
 
     if (
       definition.name === "reservation.create_hold" &&

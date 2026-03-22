@@ -1,6 +1,7 @@
 import { ActionExecutionService } from "../actions/action-execution-service";
 import { ActionPolicyEngine } from "../actions/action-policy-engine";
 import { listActionCatalog } from "../actions/action-registry";
+import { AssistantTarget } from "@vlv-ai/shared";
 import { ActionProposalService } from "../ai/action-proposal-service";
 import { AssistantOrchestrator } from "../ai/assistant-orchestrator";
 import { FinalResponseService } from "../ai/final-response-service";
@@ -29,7 +30,7 @@ export interface ApplicationServices {
   assistantOrchestrator: AssistantOrchestrator;
   whatsappService: WhatsAppService;
   connectionTestService: ConnectionTestService;
-  listActionCatalog: typeof listActionCatalog;
+  listActionCatalog: (target: AssistantTarget) => ReturnType<typeof listActionCatalog>;
 }
 
 export function createApplicationServices(): ApplicationServices {

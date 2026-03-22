@@ -13,7 +13,8 @@ export function createHealthRoutes(services: ApplicationServices): Router {
       response.json({
         ok: true,
         configured: Boolean(config),
-        tenantId: config?.tenantId ?? null
+        tenantId: config?.tenantId ?? null,
+        defaultTarget: config?.defaultTarget ?? null
       });
     })
   );

@@ -1,13 +1,16 @@
 # VLV AI Assistant Platform
 
-Node/TypeScript orchestration server for Vive La Vibe PMS.
+Node/TypeScript orchestration server for Vive La Vibe operational domains.
 
-This project is the AI control plane that sits between channels like admin chat or WhatsApp and the stored procedures already used by the PMS. The model never connects directly to MariaDB and never writes SQL.
+This project is the AI control plane that sits between channels like admin chat or WhatsApp and the stored procedures exposed by the active runtime target. The model never connects directly to MariaDB and never writes SQL.
 
 ## What this v1 includes
 
 - Express backend using OpenAI Responses API
 - Stored-procedure action registry with approval flow
+- Explicit target routing between:
+  - `business_brain`
+  - `pms`
 - Admin UI with:
   - setup and secret management
   - connection tests
@@ -21,10 +24,10 @@ This project is the AI control plane that sits between channels like admin chat 
 ## Main runtime flow
 
 1. A message arrives from admin chat or WhatsApp.
-2. The backend loads its Markdown operating docs and current runtime context.
-3. OpenAI proposes one allowed action from the catalog.
+2. The backend resolves the request target and loads only the Markdown docs and runtime context for that target.
+3. OpenAI proposes one allowed action from the target-specific catalog.
 4. The backend validates permissions, execution mode, and arguments.
-5. The backend executes the mapped PMS stored procedure or composite snapshot action.
+5. The backend executes the mapped stored procedure or composite snapshot action for that target.
 6. The backend generates the final Spanish operational response.
 7. If the action is write mode and approval is required, it waits in the approval queue.
 
@@ -37,7 +40,9 @@ ai-assistant-platform/
     admin-ui/    React admin console with setup, chat, approvals, logs
   packages/
     shared/      Shared TypeScript contracts
-  docs/          Markdown operating context loaded into the model prompt
+  docs/
+    shared/      Markdown loaded for every target
+    domains/     Target-specific Markdown operating context
   storage/       Local runtime files: config, approvals, conversations, logs
 ```
 
@@ -56,20 +61,18 @@ Copy `.env.example` to `.env` and set:
 
 Save these through the setup screen:
 
-- Assistant runtime:
+- Default target
+- Per target runtime:
+  - enabled flag
+  - docs directory
   - company code
   - default locale
   - default property code
-  - default PMS actor user id
+  - default actor user id
   - WhatsApp actor user id
   - WhatsApp roles CSV
   - WhatsApp permissions CSV
-- MariaDB:
-  - host
-  - port
-  - user
-  - password
-  - database
+  - MariaDB host/port/user/password/database
 - OpenAI:
   - API key
   - model
@@ -94,12 +97,12 @@ npm run dev:admin
 
 ## Key files to customize
 
-- Human/operator docs for the model:
-  - `docs/business_rules.md`
-  - `docs/stored_procedures.md`
-  - `docs/assistant_behavior.md`
-  - `docs/permissions.md`
-  - `docs/company_context.md`
+- Shared docs for all targets:
+  - `docs/shared/platform_overview.md`
+  - `docs/shared/target_routing.md`
+- Target docs for the model:
+  - `docs/domains/business_brain/*`
+  - `docs/domains/pms/*`
 - Action catalog:
   - `apps/backend/src/actions/action-registry.ts`
 - Admin test chat:

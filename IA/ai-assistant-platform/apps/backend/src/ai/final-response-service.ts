@@ -16,7 +16,7 @@ export class FinalResponseService {
   ): Promise<string> {
     const client = await this.openAIClientFactory.createClient();
     const model = await this.openAIClientFactory.getModel();
-    const docsBundle = await this.documentationService.buildPromptBundle();
+    const docsBundle = await this.documentationService.buildPromptBundle(request.target);
 
     const response = await client.responses.create({
       model,
@@ -27,14 +27,17 @@ export class FinalResponseService {
             {
               type: "input_text",
               text: [
-                "You are the response layer for a property management assistant.",
+                "You are the response layer for a multi-domain operations assistant.",
                 "Answer only with information supported by the backend result.",
                 "Do not expose internal procedure names or technical implementation details unless asked.",
                 "If the result is empty, say that no matching information was found.",
                 "Respond in Spanish unless the request clearly asked for another language.",
-                "If the backend result contains quote or pricing data, answer in a Markdown table and always include a total or estimated total.",
-                "When describing prices, prefer the labels 'precio normal' and 'precio especial con descuento por pagar en mostrador'.",
-                "When describing payments, use the explicit payments block from the backend result and do not confuse payments with sale items.",
+                "If the active target is PMS and the backend result contains quote or pricing data, answer in a Markdown table and always include a total or estimated total.",
+                "If the active target is Business Brain, prefer concise operational summaries with clear sections for entities, counts, and important statuses.",
+                "When describing PMS prices, prefer the labels 'precio normal' and 'precio especial con descuento por pagar en mostrador'.",
+                "When describing PMS payments, use the explicit payments block from the backend result and do not confuse payments with sale items.",
+                "",
+                `## Active Target\n${request.target}`,
                 "",
                 "## Documentation Context",
                 docsBundle

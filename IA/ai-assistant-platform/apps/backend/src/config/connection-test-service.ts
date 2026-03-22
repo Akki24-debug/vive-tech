@@ -1,11 +1,19 @@
 import mysql from "mysql2/promise";
 import OpenAI from "openai";
-import { ConnectionTestRequest, ConnectionTestResult, DecryptedRuntimeConfig, RuntimeConfigInput } from "@vlv-ai/shared";
+import {
+  AssistantTarget,
+  ConnectionTestRequest,
+  ConnectionTestResult,
+  DecryptedRuntimeConfig,
+  RuntimeConfigInput
+} from "@vlv-ai/shared";
 
 import { RuntimeConfigService } from "./runtime-config-service";
 import { runtimeConfigInputSchema } from "./config-schema";
 import { ConfigurationError } from "../shared/errors";
 import { MetaCloudWhatsAppClient } from "../channels/whatsapp/meta-cloud-client";
+
+const DEFAULT_DOMAIN_TARGET: AssistantTarget = "business_brain";
 
 export class ConnectionTestService {
   constructor(
@@ -16,10 +24,11 @@ export class ConnectionTestService {
   async testConnection(request: ConnectionTestRequest): Promise<ConnectionTestResult> {
     const startedAt = Date.now();
     const config = await this.resolveConfig(request.candidateConfig);
+    const domainTarget = request.domainTarget ?? config.defaultTarget ?? DEFAULT_DOMAIN_TARGET;
 
     switch (request.target) {
       case "database":
-        await this.testDatabase(config);
+        await this.testDatabase(config, domainTarget);
         break;
       case "openai":
         await this.testOpenAI(config);
@@ -35,8 +44,12 @@ export class ConnectionTestService {
 
     return {
       target: request.target,
+      domainTarget: request.target === "database" ? domainTarget : undefined,
       success: true,
-      details: `${request.target} connection test succeeded.`,
+      details:
+        request.target === "database"
+          ? `${request.target} connection test succeeded for ${domainTarget}.`
+          : `${request.target} connection test succeeded.`,
       durationMs: Date.now() - startedAt
     };
   }
@@ -55,40 +68,142 @@ export class ConnectionTestService {
     }
 
     const mergedInput = runtimeConfigInputSchema.parse({
-      tenantId: candidateConfig.tenantId ?? existing?.tenantId ?? "",
-      docsDirectory: candidateConfig.docsDirectory ?? existing?.docsDirectory,
-      assistant: {
-        companyCode: candidateConfig.assistant?.companyCode ?? existing?.assistant.companyCode ?? "",
-        defaultLocale:
-          candidateConfig.assistant?.defaultLocale ?? existing?.assistant.defaultLocale ?? "es-MX",
-        defaultPropertyCode:
-          candidateConfig.assistant?.defaultPropertyCode ?? existing?.assistant.defaultPropertyCode,
-        defaultActorUserId:
-          candidateConfig.assistant?.defaultActorUserId ?? existing?.assistant.defaultActorUserId ?? 1,
-        whatsappActorUserId:
-          candidateConfig.assistant?.whatsappActorUserId ??
-          existing?.assistant.whatsappActorUserId ??
-          candidateConfig.assistant?.defaultActorUserId ??
-          existing?.assistant.defaultActorUserId ??
-          1,
-        whatsappRolesCsv:
-          candidateConfig.assistant?.whatsappRolesCsv ??
-          existing?.assistant.whatsappRolesCsv ??
-          "admin",
-        whatsappPermissionsCsv:
-          candidateConfig.assistant?.whatsappPermissionsCsv ??
-          existing?.assistant.whatsappPermissionsCsv ??
-          ""
-      },
-      database: {
-        host: candidateConfig.database?.host ?? existing?.database.host ?? "",
-        port: candidateConfig.database?.port ?? existing?.database.port ?? 3306,
-        user: candidateConfig.database?.user ?? existing?.database.user ?? "",
-        password: candidateConfig.database?.password ?? existing?.database.password ?? "",
-        database: candidateConfig.database?.database ?? existing?.database.database ?? "",
-        connectionLimit:
-          candidateConfig.database?.connectionLimit ?? existing?.database.connectionLimit ?? 10,
-        ssl: candidateConfig.database?.ssl ?? existing?.database.ssl ?? false
+      tenantId: candidateConfig.tenantId ?? existing?.tenantId ?? "default",
+      defaultTarget: candidateConfig.defaultTarget ?? existing?.defaultTarget ?? DEFAULT_DOMAIN_TARGET,
+      domains: {
+        business_brain: {
+          enabled:
+            candidateConfig.domains?.business_brain?.enabled ??
+            existing?.domains.business_brain.enabled ??
+            true,
+          docsDirectory:
+            candidateConfig.domains?.business_brain?.docsDirectory ??
+            existing?.domains.business_brain.docsDirectory,
+          assistant: {
+            companyCode:
+              candidateConfig.domains?.business_brain?.assistant.companyCode ??
+              existing?.domains.business_brain.assistant.companyCode ??
+              "VLV-BRAIN",
+            defaultLocale:
+              candidateConfig.domains?.business_brain?.assistant.defaultLocale ??
+              existing?.domains.business_brain.assistant.defaultLocale ??
+              "es-MX",
+            defaultPropertyCode:
+              candidateConfig.domains?.business_brain?.assistant.defaultPropertyCode ??
+              existing?.domains.business_brain.assistant.defaultPropertyCode,
+            defaultActorUserId:
+              candidateConfig.domains?.business_brain?.assistant.defaultActorUserId ??
+              existing?.domains.business_brain.assistant.defaultActorUserId ??
+              0,
+            whatsappActorUserId:
+              candidateConfig.domains?.business_brain?.assistant.whatsappActorUserId ??
+              existing?.domains.business_brain.assistant.whatsappActorUserId ??
+              0,
+            whatsappRolesCsv:
+              candidateConfig.domains?.business_brain?.assistant.whatsappRolesCsv ??
+              existing?.domains.business_brain.assistant.whatsappRolesCsv ??
+              "admin",
+            whatsappPermissionsCsv:
+              candidateConfig.domains?.business_brain?.assistant.whatsappPermissionsCsv ??
+              existing?.domains.business_brain.assistant.whatsappPermissionsCsv ??
+              ""
+          },
+          database: {
+            host:
+              candidateConfig.domains?.business_brain?.database.host ??
+              existing?.domains.business_brain.database.host ??
+              "127.0.0.1",
+            port:
+              candidateConfig.domains?.business_brain?.database.port ??
+              existing?.domains.business_brain.database.port ??
+              3307,
+            user:
+              candidateConfig.domains?.business_brain?.database.user ??
+              existing?.domains.business_brain.database.user ??
+              "root",
+            password:
+              candidateConfig.domains?.business_brain?.database.password ??
+              existing?.domains.business_brain.database.password ??
+              "",
+            database:
+              candidateConfig.domains?.business_brain?.database.database ??
+              existing?.domains.business_brain.database.database ??
+              "vive_la_vibe_brain",
+            connectionLimit:
+              candidateConfig.domains?.business_brain?.database.connectionLimit ??
+              existing?.domains.business_brain.database.connectionLimit ??
+              10,
+            ssl:
+              candidateConfig.domains?.business_brain?.database.ssl ??
+              existing?.domains.business_brain.database.ssl ??
+              false
+          }
+        },
+        pms: {
+          enabled:
+            candidateConfig.domains?.pms?.enabled ?? existing?.domains.pms.enabled ?? false,
+          docsDirectory:
+            candidateConfig.domains?.pms?.docsDirectory ?? existing?.domains.pms.docsDirectory,
+          assistant: {
+            companyCode:
+              candidateConfig.domains?.pms?.assistant.companyCode ??
+              existing?.domains.pms.assistant.companyCode ??
+              "VIBE",
+            defaultLocale:
+              candidateConfig.domains?.pms?.assistant.defaultLocale ??
+              existing?.domains.pms.assistant.defaultLocale ??
+              "es-MX",
+            defaultPropertyCode:
+              candidateConfig.domains?.pms?.assistant.defaultPropertyCode ??
+              existing?.domains.pms.assistant.defaultPropertyCode,
+            defaultActorUserId:
+              candidateConfig.domains?.pms?.assistant.defaultActorUserId ??
+              existing?.domains.pms.assistant.defaultActorUserId ??
+              1,
+            whatsappActorUserId:
+              candidateConfig.domains?.pms?.assistant.whatsappActorUserId ??
+              existing?.domains.pms.assistant.whatsappActorUserId ??
+              1,
+            whatsappRolesCsv:
+              candidateConfig.domains?.pms?.assistant.whatsappRolesCsv ??
+              existing?.domains.pms.assistant.whatsappRolesCsv ??
+              "admin",
+            whatsappPermissionsCsv:
+              candidateConfig.domains?.pms?.assistant.whatsappPermissionsCsv ??
+              existing?.domains.pms.assistant.whatsappPermissionsCsv ??
+              ""
+          },
+          database: {
+            host:
+              candidateConfig.domains?.pms?.database.host ??
+              existing?.domains.pms.database.host ??
+              "127.0.0.1",
+            port:
+              candidateConfig.domains?.pms?.database.port ??
+              existing?.domains.pms.database.port ??
+              3306,
+            user:
+              candidateConfig.domains?.pms?.database.user ??
+              existing?.domains.pms.database.user ??
+              "",
+            password:
+              candidateConfig.domains?.pms?.database.password ??
+              existing?.domains.pms.database.password ??
+              "",
+            database:
+              candidateConfig.domains?.pms?.database.database ??
+              existing?.domains.pms.database.database ??
+              "",
+            connectionLimit:
+              candidateConfig.domains?.pms?.database.connectionLimit ??
+              existing?.domains.pms.database.connectionLimit ??
+              10,
+            ssl:
+              candidateConfig.domains?.pms?.database.ssl ??
+              existing?.domains.pms.database.ssl ??
+              false
+          }
+        }
       },
       openai: {
         apiKey: candidateConfig.openai?.apiKey ?? existing?.openai.apiKey ?? "",
@@ -98,7 +213,10 @@ export class ConnectionTestService {
       },
       whatsapp: {
         provider: candidateConfig.whatsapp?.provider ?? existing?.whatsapp.provider ?? "meta-cloud",
-        baseUrl: candidateConfig.whatsapp?.baseUrl ?? existing?.whatsapp.baseUrl ?? "https://graph.facebook.com/v22.0/",
+        baseUrl:
+          candidateConfig.whatsapp?.baseUrl ??
+          existing?.whatsapp.baseUrl ??
+          "https://graph.facebook.com/v22.0/",
         phoneNumberId:
           candidateConfig.whatsapp?.phoneNumberId ?? existing?.whatsapp.phoneNumberId ?? "",
         businessAccountId:
@@ -110,31 +228,70 @@ export class ConnectionTestService {
       },
       execution: {
         mode: candidateConfig.execution?.mode ?? existing?.execution.mode ?? "hybrid",
-        enableWrites: candidateConfig.execution?.enableWrites ?? existing?.execution.enableWrites ?? true
+        enableWrites:
+          candidateConfig.execution?.enableWrites ?? existing?.execution.enableWrites ?? true
       }
     });
 
     return {
       tenantId: mergedInput.tenantId,
-      docsDirectory: mergedInput.docsDirectory ?? "",
-      assistant: {
-        companyCode: mergedInput.assistant.companyCode,
-        defaultLocale: mergedInput.assistant.defaultLocale ?? "es-MX",
-        defaultPropertyCode: mergedInput.assistant.defaultPropertyCode,
-        defaultActorUserId: mergedInput.assistant.defaultActorUserId,
-        whatsappActorUserId:
-          mergedInput.assistant.whatsappActorUserId ?? mergedInput.assistant.defaultActorUserId,
-        whatsappRolesCsv: mergedInput.assistant.whatsappRolesCsv ?? "",
-        whatsappPermissionsCsv: mergedInput.assistant.whatsappPermissionsCsv ?? ""
-      },
-      database: {
-        host: mergedInput.database.host,
-        port: mergedInput.database.port,
-        user: mergedInput.database.user,
-        password: mergedInput.database.password ?? "",
-        database: mergedInput.database.database,
-        connectionLimit: mergedInput.database.connectionLimit ?? 10,
-        ssl: mergedInput.database.ssl ?? false
+      defaultTarget: mergedInput.defaultTarget ?? DEFAULT_DOMAIN_TARGET,
+      domains: {
+        business_brain: {
+          enabled: mergedInput.domains.business_brain.enabled,
+          docsDirectory: mergedInput.domains.business_brain.docsDirectory ?? "",
+          assistant: {
+            companyCode: mergedInput.domains.business_brain.assistant.companyCode,
+            defaultLocale:
+              mergedInput.domains.business_brain.assistant.defaultLocale ?? "es-MX",
+            defaultPropertyCode:
+              mergedInput.domains.business_brain.assistant.defaultPropertyCode,
+            defaultActorUserId:
+              mergedInput.domains.business_brain.assistant.defaultActorUserId,
+            whatsappActorUserId:
+              mergedInput.domains.business_brain.assistant.whatsappActorUserId ??
+              mergedInput.domains.business_brain.assistant.defaultActorUserId,
+            whatsappRolesCsv:
+              mergedInput.domains.business_brain.assistant.whatsappRolesCsv ?? "admin",
+            whatsappPermissionsCsv:
+              mergedInput.domains.business_brain.assistant.whatsappPermissionsCsv ?? ""
+          },
+          database: {
+            host: mergedInput.domains.business_brain.database.host,
+            port: mergedInput.domains.business_brain.database.port,
+            user: mergedInput.domains.business_brain.database.user,
+            password: mergedInput.domains.business_brain.database.password ?? "",
+            database: mergedInput.domains.business_brain.database.database,
+            connectionLimit:
+              mergedInput.domains.business_brain.database.connectionLimit ?? 10,
+            ssl: mergedInput.domains.business_brain.database.ssl ?? false
+          }
+        },
+        pms: {
+          enabled: mergedInput.domains.pms.enabled,
+          docsDirectory: mergedInput.domains.pms.docsDirectory ?? "",
+          assistant: {
+            companyCode: mergedInput.domains.pms.assistant.companyCode,
+            defaultLocale: mergedInput.domains.pms.assistant.defaultLocale ?? "es-MX",
+            defaultPropertyCode: mergedInput.domains.pms.assistant.defaultPropertyCode,
+            defaultActorUserId: mergedInput.domains.pms.assistant.defaultActorUserId,
+            whatsappActorUserId:
+              mergedInput.domains.pms.assistant.whatsappActorUserId ??
+              mergedInput.domains.pms.assistant.defaultActorUserId,
+            whatsappRolesCsv: mergedInput.domains.pms.assistant.whatsappRolesCsv ?? "admin",
+            whatsappPermissionsCsv:
+              mergedInput.domains.pms.assistant.whatsappPermissionsCsv ?? ""
+          },
+          database: {
+            host: mergedInput.domains.pms.database.host,
+            port: mergedInput.domains.pms.database.port,
+            user: mergedInput.domains.pms.database.user,
+            password: mergedInput.domains.pms.database.password ?? "",
+            database: mergedInput.domains.pms.database.database,
+            connectionLimit: mergedInput.domains.pms.database.connectionLimit ?? 10,
+            ssl: mergedInput.domains.pms.database.ssl ?? false
+          }
+        }
       },
       openai: {
         apiKey: mergedInput.openai.apiKey ?? "",
@@ -159,14 +316,23 @@ export class ConnectionTestService {
     };
   }
 
-  private async testDatabase(config: DecryptedRuntimeConfig): Promise<void> {
+  private async testDatabase(
+    config: DecryptedRuntimeConfig,
+    domainTarget: AssistantTarget
+  ): Promise<void> {
+    const domain = config.domains[domainTarget];
+
+    if (!domain.enabled) {
+      throw new ConfigurationError(`Domain ${domainTarget} is disabled.`);
+    }
+
     const connection = await mysql.createConnection({
-      host: config.database.host,
-      port: config.database.port,
-      user: config.database.user,
-      password: config.database.password,
-      database: config.database.database,
-      ssl: config.database.ssl ? {} : undefined
+      host: domain.database.host,
+      port: domain.database.port,
+      user: domain.database.user,
+      password: domain.database.password,
+      database: domain.database.database,
+      ssl: domain.database.ssl ? {} : undefined
     });
 
     try {

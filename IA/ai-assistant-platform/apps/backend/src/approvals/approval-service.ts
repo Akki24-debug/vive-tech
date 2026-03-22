@@ -18,10 +18,12 @@ export class ApprovalService {
     const approval: ApprovalRecord = {
       id: createId("approval"),
       tenantId: request.tenantId,
+      target: request.target,
       conversationId: request.conversationId,
       status: "pending",
       requestContext: {
         tenantId: request.tenantId,
+        target: request.target,
         companyCode: request.companyCode,
         conversationId: request.conversationId,
         userId: request.userId,
@@ -54,9 +56,12 @@ export class ApprovalService {
           )
       );
 
-      return records.filter(Boolean).sort((a: ApprovalRecord | null, b: ApprovalRecord | null) => {
-        return b!.requestedAt.localeCompare(a!.requestedAt);
-      }) as ApprovalRecord[];
+      return records
+        .filter(Boolean)
+        .map((record) => this.normalizeApproval(record!))
+        .sort((a: ApprovalRecord | null, b: ApprovalRecord | null) => {
+          return b!.requestedAt.localeCompare(a!.requestedAt);
+        }) as ApprovalRecord[];
     } catch {
       return [];
     }
@@ -69,7 +74,7 @@ export class ApprovalService {
       throw new NotFoundError(`Approval ${approvalId} was not found.`);
     }
 
-    return approval;
+    return this.normalizeApproval(approval);
   }
 
   async markApproved(approvalId: string, approverId: string): Promise<ApprovalRecord> {
@@ -128,5 +133,20 @@ export class ApprovalService {
 
   private getFilePath(approvalId: string): string {
     return path.join(paths.approvalsDirectory, `${approvalId}.json`);
+  }
+
+  private normalizeApproval(approval: ApprovalRecord): ApprovalRecord {
+    return {
+      ...approval,
+      target: approval.target ?? approval.requestContext.target ?? "pms",
+      requestContext: {
+        ...approval.requestContext,
+        target: approval.requestContext.target ?? approval.target ?? "pms"
+      },
+      executionPreview: {
+        ...approval.executionPreview,
+        target: approval.executionPreview.target ?? approval.target ?? "pms"
+      }
+    };
   }
 }

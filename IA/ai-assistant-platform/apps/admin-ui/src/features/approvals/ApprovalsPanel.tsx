@@ -1,10 +1,11 @@
-import { ApprovalRecord } from "@vlv-ai/shared";
+import { ApprovalRecord, AssistantTarget } from "@vlv-ai/shared";
 
 import { SectionCard } from "../../components/SectionCard";
 import { StatusBadge } from "../../components/StatusBadge";
 
 interface ApprovalsPanelProps {
   approvals: ApprovalRecord[];
+  selectedTarget: AssistantTarget;
   approverId: string;
   onApproverIdChange: (value: string) => void;
   onApprove: (approvalId: string) => Promise<void>;
@@ -13,6 +14,7 @@ interface ApprovalsPanelProps {
 
 export function ApprovalsPanel({
   approvals,
+  selectedTarget,
   approverId,
   onApproverIdChange,
   onApprove,
@@ -21,7 +23,7 @@ export function ApprovalsPanel({
   return (
     <SectionCard
       title="Manual Approval Queue"
-      subtitle="Pending actions from manual mode and hybrid write operations"
+      subtitle={`Pending actions for ${selectedTarget}`}
       actions={
         <input
           className="input"
@@ -51,12 +53,16 @@ export function ApprovalsPanel({
                 </div>
                 <p>{approval.actionProposal.summary}</p>
                 <small>
-                  {approval.procedureName ?? "No procedure"} • {approval.requestedAt}
+                  {approval.target} • {approval.procedureName ?? "No procedure"} • {approval.requestedAt}
                 </small>
               </div>
               {approval.status === "pending" ? (
                 <div className="button-row">
-                  <button className="button button--secondary" onClick={() => onReject(approval.id)} type="button">
+                  <button
+                    className="button button--secondary"
+                    onClick={() => onReject(approval.id)}
+                    type="button"
+                  >
                     Reject
                   </button>
                   <button className="button" onClick={() => onApprove(approval.id)} type="button">

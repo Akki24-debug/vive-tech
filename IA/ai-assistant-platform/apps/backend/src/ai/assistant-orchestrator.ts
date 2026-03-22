@@ -22,6 +22,7 @@ export class AssistantOrchestrator {
   async handleUserMessage(request: AssistantRequest): Promise<AssistantResponse> {
     await this.conversationStore.appendMessage(
       request.tenantId,
+      request.target,
       request.conversationId,
       request.channel,
       request.userId,
@@ -30,6 +31,7 @@ export class AssistantOrchestrator {
     );
     const conversation = await this.conversationStore.getOrCreate(
       request.tenantId,
+      request.target,
       request.conversationId,
       request.channel,
       request.userId
@@ -42,7 +44,7 @@ export class AssistantOrchestrator {
       action: actionProposal.action,
       channel: request.channel,
       actorUserId: request.actorUserId
-    });
+    }, request.target);
 
     if (!validation.definition.executable) {
       const answer =
@@ -52,6 +54,7 @@ export class AssistantOrchestrator {
 
       await this.conversationStore.appendMessage(
         request.tenantId,
+        request.target,
         request.conversationId,
         request.channel,
         request.userId,
@@ -68,6 +71,7 @@ export class AssistantOrchestrator {
 
     if (validation.requiresApproval) {
       const approval = await this.approvalService.createPendingApproval(request, actionProposal, {
+        target: request.target,
         procedureName: validation.definition.procedure?.name,
         arguments: validation.parsedArguments,
         mode: validation.definition.mode
@@ -79,13 +83,15 @@ export class AssistantOrchestrator {
         {
           approvalId: approval.id,
           action: actionProposal.action
-        }
+        },
+        request.target
       );
 
       const answer = `The request was interpreted as ${actionProposal.action} and is waiting for manual approval.`;
 
       await this.conversationStore.appendMessage(
         request.tenantId,
+        request.target,
         request.conversationId,
         request.channel,
         request.userId,
@@ -110,11 +116,12 @@ export class AssistantOrchestrator {
       conversationId: request.conversationId,
       action: actionProposal.action,
       sources: execution.sources
-    });
+    }, request.target);
     const answer = await this.finalResponseService.createFinalAnswer(request, actionProposal.action, execution);
 
     await this.conversationStore.appendMessage(
       request.tenantId,
+      request.target,
       request.conversationId,
       request.channel,
       request.userId,
@@ -144,7 +151,7 @@ export class AssistantOrchestrator {
       approvalId,
       action: approved.actionProposal.action,
       sources: execution.sources
-    });
+    }, approved.target);
 
     const answer = await this.finalResponseService.createFinalAnswer(
       {
@@ -157,6 +164,7 @@ export class AssistantOrchestrator {
 
     await this.conversationStore.appendMessage(
       approved.tenantId,
+      approved.target,
       approved.conversationId,
       approved.requestContext.channel,
       approved.requestedBy,
@@ -177,9 +185,10 @@ export class AssistantOrchestrator {
     await this.activityLogService.warn("approval.rejected", "Rejected pending assistant action.", {
       approvalId,
       action: approval.actionProposal.action
-    });
+    }, approval.target);
     await this.conversationStore.appendMessage(
       approval.tenantId,
+      approval.target,
       approval.conversationId,
       approval.requestContext.channel,
       approval.requestedBy,

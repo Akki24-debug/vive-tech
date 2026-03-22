@@ -11,7 +11,8 @@ export class ConversationStore {
   private readonly maxMessages = 12;
 
   async getConversation(conversationId: string): Promise<ConversationRecord | null> {
-    return readJsonFile<ConversationRecord | null>(this.getFilePath(conversationId), null);
+    const record = await readJsonFile<ConversationRecord | null>(this.getFilePath(conversationId), null);
+    return record ? this.normalizeRecord(record) : null;
   }
 
   async listRecent(limit = 20): Promise<ConversationRecord[]> {
@@ -31,6 +32,7 @@ export class ConversationStore {
 
       return records
         .filter(Boolean)
+        .map((record) => this.normalizeRecord(record!))
         .sort((left: ConversationRecord | null, right: ConversationRecord | null) =>
           right!.updatedAt.localeCompare(left!.updatedAt)
         )
@@ -42,6 +44,7 @@ export class ConversationStore {
 
   async getOrCreate(
     tenantId: string,
+    target: ConversationRecord["target"],
     conversationId: string,
     channel: ConversationRecord["channel"],
     userId: string
@@ -50,12 +53,13 @@ export class ConversationStore {
     const existing = await readJsonFile<ConversationRecord | null>(filePath, null);
 
     if (existing) {
-      return existing;
+      return this.normalizeRecord(existing);
     }
 
     const record: ConversationRecord = {
       id: conversationId,
       tenantId,
+      target,
       channel,
       userId,
       summary: "",
@@ -70,13 +74,14 @@ export class ConversationStore {
 
   async appendMessage(
     tenantId: string,
+    target: ConversationRecord["target"],
     conversationId: string,
     channel: ConversationRecord["channel"],
     userId: string,
     role: ConversationMessage["role"],
     content: string
   ): Promise<ConversationRecord> {
-    const record = await this.getOrCreate(tenantId, conversationId, channel, userId);
+    const record = await this.getOrCreate(tenantId, target, conversationId, channel, userId);
     const updatedMessages = [
       ...record.messages,
       {
@@ -92,6 +97,7 @@ export class ConversationStore {
 
     const nextRecord: ConversationRecord = {
       ...record,
+      target,
       messages: trimmed,
       summary,
       updatedAt: nowIso()
@@ -110,5 +116,12 @@ export class ConversationStore {
 
   private getFilePath(conversationId: string): string {
     return path.join(paths.conversationsDirectory, `${conversationId}.json`);
+  }
+
+  private normalizeRecord(record: ConversationRecord): ConversationRecord {
+    return {
+      ...record,
+      target: record.target ?? "pms"
+    };
   }
 }

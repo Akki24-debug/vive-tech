@@ -1,4 +1,5 @@
 import {
+  AssistantTarget,
   ActionCatalogEntry,
   ApprovalRecord,
   AssistantRequest,
@@ -31,7 +32,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getHealth: () => request<{ ok: boolean; configured: boolean; tenantId: string | null }>("/api/health"),
+  getHealth: () =>
+    request<{ ok: boolean; configured: boolean; tenantId: string | null; defaultTarget: AssistantTarget | null }>("/api/health"),
   getConfig: () => request<{ config: SanitizedRuntimeConfig | null }>("/api/config"),
   saveConfig: (input: RuntimeConfigInput) =>
     request<{ config: SanitizedRuntimeConfig }>("/api/config", {
@@ -43,9 +45,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input)
     }),
-  getDocs: (includeContent = false) =>
-    request<{ documents: DocumentDescriptor[] }>(`/api/docs?includeContent=${String(includeContent)}`),
-  getApprovals: () => request<{ approvals: ApprovalRecord[] }>("/api/approvals"),
+  getDocs: (target: AssistantTarget, includeContent = false) =>
+    request<{ documents: DocumentDescriptor[] }>(
+      `/api/docs?target=${target}&includeContent=${String(includeContent)}`
+    ),
+  getApprovals: (target?: AssistantTarget) =>
+    request<{ approvals: ApprovalRecord[] }>(
+      `/api/approvals${target ? `?target=${target}` : ""}`
+    ),
   approve: (approvalId: string, approverId: string) =>
     request(`/api/approvals/${approvalId}/approve`, {
       method: "POST",
@@ -56,9 +63,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ approverId })
     }),
-  getLogs: (limit = 100) => request<{ events: LogEvent[] }>(`/api/logs?limit=${limit}`),
-  getActions: () => request<{ actions: ActionCatalogEntry[] }>("/api/actions")
-  ,
+  getLogs: (limit = 100, target?: AssistantTarget | "shared") =>
+    request<{ events: LogEvent[] }>(`/api/logs?limit=${limit}${target ? `&target=${target}` : ""}`),
+  getActions: (target: AssistantTarget) =>
+    request<{ actions: ActionCatalogEntry[] }>(`/api/actions?target=${target}`),
   sendAssistantMessage: (input: AssistantRequest) =>
     request<AssistantResponse>("/api/assistant/messages", {
       method: "POST",
@@ -66,6 +74,8 @@ export const api = {
     }),
   getConversation: (conversationId: string) =>
     request<{ conversation: ConversationRecord | null }>(`/api/conversations/${conversationId}`),
-  getConversations: (limit = 20) =>
-    request<{ conversations: ConversationRecord[] }>(`/api/conversations?limit=${limit}`)
+  getConversations: (limit = 20, target?: AssistantTarget) =>
+    request<{ conversations: ConversationRecord[] }>(
+      `/api/conversations?limit=${limit}${target ? `&target=${target}` : ""}`
+    )
 };

@@ -60,10 +60,10 @@ export class ActionProposalService {
   ): Promise<ActionProposal> {
     const client = await this.openAIClientFactory.createClient();
     const model = await this.openAIClientFactory.getModel();
-    const docsBundle = await this.documentationService.buildPromptBundle();
-    const actionCatalog = listActionCatalog()
+    const docsBundle = await this.documentationService.buildPromptBundle(request.target);
+    const actionCatalog = listActionCatalog(request.target)
       .map((action) => {
-        return `- ${action.name}: ${action.description}. Executable: ${action.executable}. Procedure: ${action.procedureName ?? "none"}. Required args: ${action.requiredArguments.join(", ") || "none"}. Required permissions: ${action.requiredPermissions.join(", ") || "none"}.`;
+        return `- ${action.name}: ${action.description}. Target: ${action.target}. Executable: ${action.executable}. Procedure: ${action.procedureName ?? "none"}. Required args: ${action.requiredArguments.join(", ") || "none"}. Required permissions: ${action.requiredPermissions.join(", ") || "none"}.`;
       })
       .join("\n");
 
@@ -76,12 +76,15 @@ export class ActionProposalService {
             {
               type: "input_text",
               text: [
-                "You are the action proposal layer for a property management AI backend.",
+                "You are the action proposal layer for a multi-domain AI backend.",
                 "You must pick exactly one action from the provided action catalog.",
                 "You must never write SQL, never invent a stored procedure, and never call actions outside the catalog.",
                 "You must never browse the web or rely on any source outside the backend docs bundle and request context.",
                 "If the user request lacks required information, choose conversation.clarify.",
-                "Prefer the narrowest read action that can answer the request. Use operations.current_state only when the user is asking for a broad operational snapshot.",
+                "Only use actions belonging to the request target.",
+                "Prefer the narrowest read action that can answer the request. Use a composite snapshot action only when the user is asking for a broad state question.",
+                "",
+                `## Active Target\n${request.target}`,
                 "",
                 "## Action Catalog",
                 actionCatalog,
@@ -99,10 +102,11 @@ export class ActionProposalService {
               type: "input_text",
               text: [
                 `Tenant: ${request.tenantId}`,
+                `Target: ${request.target}`,
                 `Company code: ${request.companyCode}`,
                 `Channel: ${request.channel}`,
                 `Channel user ID: ${request.userId}`,
-                `PMS actor user ID: ${request.actorUserId}`,
+                `Actor user ID: ${request.actorUserId}`,
                 `Roles: ${request.roles.join(", ") || "none"}`,
                 `Permissions: ${request.permissions.join(", ") || "none"}`,
                 `Property scope: ${request.propertyCode ?? "none"}`,
@@ -139,7 +143,7 @@ export class ActionProposalService {
       await this.activityLogService.error("ai.action_proposal.parse_failed", "Failed to parse AI action proposal.", {
         payload,
         error: error instanceof Error ? error.message : "unknown"
-      });
+      }, request.target);
       throw new ValidationError("The action proposal response could not be parsed.", {
         payload
       });
@@ -149,7 +153,7 @@ export class ActionProposalService {
       action: parsed.action,
       intent: parsed.intent,
       confidence: parsed.confidence
-    });
+    }, request.target);
 
     return parsed;
   }

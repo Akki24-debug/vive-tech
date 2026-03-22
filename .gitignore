@@ -9,11 +9,14 @@ Desktop.ini
 *.log
 *.tmp
 *.temp
+IA/ai-assistant-platform/storage/runtime/
+IA/ai-assistant-platform/apps/backend/storage/
 
 # Env / secrets
 .env
 .env.*
 !.env.example
+LOCAL_DB_ACCESS.md
 config.local.php
 config.php.local
 *.pem

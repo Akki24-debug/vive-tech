@@ -13,10 +13,14 @@ export function createApprovalRoutes(services: ApplicationServices): Router {
 
   router.get(
     "/approvals",
-    asyncRoute(async (_request, response) => {
+    asyncRoute(async (request, response) => {
+      const target =
+        request.query.target !== undefined
+          ? z.enum(["business_brain", "pms"]).parse(request.query.target)
+          : undefined;
       const approvals = await services.approvalService.listApprovals();
       response.json({
-        approvals
+        approvals: target ? approvals.filter((approval) => approval.target === target) : approvals
       });
     })
   );

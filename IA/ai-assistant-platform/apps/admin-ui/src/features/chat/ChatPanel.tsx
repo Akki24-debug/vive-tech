@@ -1,6 +1,12 @@
 import { FormEvent, useEffect, useState } from "react";
 
-import { AssistantRequest, AssistantResponse, ConversationRecord, SanitizedRuntimeConfig } from "@vlv-ai/shared";
+import {
+  AssistantRequest,
+  AssistantResponse,
+  AssistantTarget,
+  ConversationRecord,
+  SanitizedRuntimeConfig
+} from "@vlv-ai/shared";
 
 import { api } from "../../api/client";
 import { SectionCard } from "../../components/SectionCard";
@@ -9,6 +15,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 interface ChatPanelProps {
   configured: boolean;
   config: SanitizedRuntimeConfig | null;
+  selectedTarget: AssistantTarget;
 }
 
 interface ChatDraft {
@@ -23,19 +30,42 @@ interface ChatDraft {
   message: string;
 }
 
-const suggestedPermissionSet = [
-  "assistant.read.availability",
-  "assistant.read.pricing",
-  "assistant.read.properties",
-  "assistant.read.guests",
-  "assistant.read.catalog",
-  "assistant.read.reservations",
-  "assistant.read.operations",
-  "assistant.write.reservations"
-].join(", ");
+const suggestedPermissionsByTarget: Record<AssistantTarget, string> = {
+  business_brain: [
+    "brain.read.context",
+    "brain.read.organization",
+    "brain.read.users",
+    "brain.read.roles",
+    "brain.read.business_areas",
+    "brain.read.business_lines",
+    "brain.read.priorities",
+    "brain.read.objectives",
+    "brain.read.integrations",
+    "brain.read.knowledge",
+    "brain.write.organization",
+    "brain.write.users",
+    "brain.write.roles",
+    "brain.write.business_areas",
+    "brain.write.business_lines",
+    "brain.write.priorities",
+    "brain.write.objectives",
+    "brain.write.integrations",
+    "brain.write.knowledge"
+  ].join(", "),
+  pms: [
+    "assistant.read.availability",
+    "assistant.read.pricing",
+    "assistant.read.properties",
+    "assistant.read.guests",
+    "assistant.read.catalog",
+    "assistant.read.reservations",
+    "assistant.read.operations",
+    "assistant.write.reservations"
+  ].join(", ")
+};
 
-export function ChatPanel({ configured, config }: ChatPanelProps) {
-  const [draft, setDraft] = useState<ChatDraft>(() => createDraft(config));
+export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps) {
+  const [draft, setDraft] = useState<ChatDraft>(() => createDraft(config, selectedTarget));
   const [conversation, setConversation] = useState<ConversationRecord | null>(null);
   const [recentConversations, setRecentConversations] = useState<ConversationRecord[]>([]);
   const [lastResponse, setLastResponse] = useState<AssistantResponse | null>(null);
@@ -43,32 +73,32 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
-    const conversationId = localStorage.getItem("vlv-ai-conversation-id");
-    const nextDraft = createDraft(config, conversationId ?? undefined);
+    const conversationId = localStorage.getItem(`vlv-ai-conversation-id:${selectedTarget}`);
+    const nextDraft = createDraft(config, selectedTarget, conversationId ?? undefined);
     setDraft((current) => ({
       ...nextDraft,
       conversationId: conversationId ?? current.conversationId,
       message: current.message
     }));
-  }, [config]);
+  }, [config, selectedTarget]);
 
   useEffect(() => {
-    void refreshConversations();
-  }, []);
+    void refreshConversations(selectedTarget);
+  }, [selectedTarget]);
 
   useEffect(() => {
-    localStorage.setItem("vlv-ai-conversation-id", draft.conversationId);
+    localStorage.setItem(`vlv-ai-conversation-id:${selectedTarget}`, draft.conversationId);
     void loadConversation(draft.conversationId);
-  }, [draft.conversationId]);
+  }, [draft.conversationId, selectedTarget]);
 
-  async function refreshConversations(): Promise<void> {
-    const response = await api.getConversations(12);
+  async function refreshConversations(target: AssistantTarget): Promise<void> {
+    const response = await api.getConversations(12, target);
     setRecentConversations(response.conversations);
   }
 
   async function loadConversation(conversationId: string): Promise<void> {
     const response = await api.getConversation(conversationId);
-    setConversation(response.conversation);
+    setConversation(response.conversation?.target === selectedTarget ? response.conversation : null);
   }
 
   async function handleSubmit(event: FormEvent): Promise<void> {
@@ -87,9 +117,11 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
     setError("");
 
     try {
+      const domain = config.domains[selectedTarget];
       const payload: AssistantRequest = {
         tenantId: config.tenantId,
-        companyCode: config.assistant.companyCode,
+        target: selectedTarget,
+        companyCode: domain.assistant.companyCode,
         conversationId: draft.conversationId,
         userId: draft.userId,
         actorUserId: draft.actorUserId,
@@ -108,7 +140,7 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
         message: ""
       }));
       await loadConversation(draft.conversationId);
-      await refreshConversations();
+      await refreshConversations(selectedTarget);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Request failed.");
     } finally {
@@ -117,7 +149,7 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
   }
 
   function handleNewConversation(): void {
-    const nextId = `admin_${Date.now()}`;
+    const nextId = `${selectedTarget}_${Date.now()}`;
     setDraft((current) => ({
       ...current,
       conversationId: nextId,
@@ -132,13 +164,17 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
     <div className="panel-grid panel-grid--chat">
       <SectionCard
         title="Test Chat"
-        subtitle="Direct console against the Node orchestration backend"
+        subtitle={`Direct console against the ${selectedTarget} runtime`}
         actions={
           <div className="button-row">
             <button className="button button--secondary" onClick={handleNewConversation} type="button">
               New conversation
             </button>
-            <button className="button button--secondary" onClick={() => void refreshConversations()} type="button">
+            <button
+              className="button button--secondary"
+              onClick={() => void refreshConversations(selectedTarget)}
+              type="button"
+            >
               Reload recent
             </button>
           </div>
@@ -147,6 +183,10 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
         <form className="chat-layout" onSubmit={handleSubmit}>
           <div className="chat-sidebar">
             <div className="form-grid">
+              <label>
+                <span>Target</span>
+                <input className="input" disabled value={selectedTarget} />
+              </label>
               <label>
                 <span>Conversation ID</span>
                 <input
@@ -168,7 +208,7 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
                 />
               </label>
               <label>
-                <span>PMS Actor User ID</span>
+                <span>Actor User ID</span>
                 <input
                   className="input"
                   type="number"
@@ -229,7 +269,7 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
                 <span>Permissions CSV</span>
                 <textarea
                   className="input input--multiline"
-                  rows={4}
+                  rows={5}
                   value={draft.permissionsCsv}
                   onChange={(event) =>
                     setDraft((current) => ({ ...current, permissionsCsv: event.target.value }))
@@ -258,7 +298,7 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
                   setDraft((current) => ({
                     ...current,
                     rolesCsv: "",
-                    permissionsCsv: suggestedPermissionSet
+                    permissionsCsv: suggestedPermissionsByTarget[selectedTarget]
                   }))
                 }
                 type="button"
@@ -354,6 +394,7 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
                 <pre className="code-block">
                   {JSON.stringify(
                     {
+                      target: selectedTarget,
                       actionProposal: lastResponse.actionProposal,
                       result: lastResponse.result
                     },
@@ -372,14 +413,17 @@ export function ChatPanel({ configured, config }: ChatPanelProps) {
 
 function createDraft(
   config: SanitizedRuntimeConfig | null,
-  conversationId = `admin_${Date.now()}`
+  target: AssistantTarget,
+  conversationId = `${target}_${Date.now()}`
 ): ChatDraft {
+  const domain = config?.domains[target];
+
   return {
     conversationId,
     userId: "admin-console",
-    actorUserId: config?.assistant.defaultActorUserId ?? 1,
-    propertyCode: config?.assistant.defaultPropertyCode ?? "",
-    locale: config?.assistant.defaultLocale ?? "es-MX",
+    actorUserId: domain?.assistant.defaultActorUserId ?? (target === "business_brain" ? 0 : 1),
+    propertyCode: domain?.assistant.defaultPropertyCode ?? "",
+    locale: domain?.assistant.defaultLocale ?? "es-MX",
     channel: "admin",
     rolesCsv: "admin",
     permissionsCsv: "",

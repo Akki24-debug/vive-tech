@@ -1,25 +1,38 @@
 import { z } from "zod";
 
+const targetAssistantSchema = z.object({
+  companyCode: z.string().min(1),
+  defaultLocale: z.string().min(2).optional(),
+  defaultPropertyCode: z.string().optional(),
+  defaultActorUserId: z.number().int().nonnegative(),
+  whatsappActorUserId: z.number().int().nonnegative().optional(),
+  whatsappRolesCsv: z.string().optional(),
+  whatsappPermissionsCsv: z.string().optional()
+});
+
+const targetDatabaseSchema = z.object({
+  host: z.string().min(1),
+  port: z.number().int().positive(),
+  user: z.string().min(1),
+  password: z.string().optional(),
+  database: z.string().min(1),
+  connectionLimit: z.number().int().positive().optional(),
+  ssl: z.boolean().optional()
+});
+
+const targetRuntimeSchema = z.object({
+  enabled: z.boolean(),
+  docsDirectory: z.string().optional(),
+  assistant: targetAssistantSchema,
+  database: targetDatabaseSchema
+});
+
 export const runtimeConfigInputSchema = z.object({
   tenantId: z.string().min(1),
-  docsDirectory: z.string().optional(),
-  assistant: z.object({
-    companyCode: z.string().min(1),
-    defaultLocale: z.string().min(2).optional(),
-    defaultPropertyCode: z.string().optional(),
-    defaultActorUserId: z.number().int().positive(),
-    whatsappActorUserId: z.number().int().positive().optional(),
-    whatsappRolesCsv: z.string().optional(),
-    whatsappPermissionsCsv: z.string().optional()
-  }),
-  database: z.object({
-    host: z.string().min(1),
-    port: z.number().int().positive(),
-    user: z.string().min(1),
-    password: z.string().optional(),
-    database: z.string().min(1),
-    connectionLimit: z.number().int().positive().optional(),
-    ssl: z.boolean().optional()
+  defaultTarget: z.enum(["business_brain", "pms"]).optional(),
+  domains: z.object({
+    business_brain: targetRuntimeSchema,
+    pms: targetRuntimeSchema
   }),
   openai: z.object({
     apiKey: z.string().optional(),

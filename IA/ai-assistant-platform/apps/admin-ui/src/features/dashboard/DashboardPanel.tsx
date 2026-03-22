@@ -1,6 +1,7 @@
 import {
   ActionCatalogEntry,
   ApprovalRecord,
+  AssistantTarget,
   DocumentDescriptor,
   LogEvent,
   SanitizedRuntimeConfig
@@ -11,6 +12,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 
 interface DashboardPanelProps {
   configured: boolean;
+  selectedTarget: AssistantTarget;
   config: SanitizedRuntimeConfig | null;
   documents: DocumentDescriptor[];
   approvals: ApprovalRecord[];
@@ -20,6 +22,7 @@ interface DashboardPanelProps {
 
 export function DashboardPanel({
   configured,
+  selectedTarget,
   config,
   documents,
   approvals,
@@ -57,6 +60,21 @@ export function DashboardPanel({
       <SectionCard title="Execution Mode" subtitle="How the backend handles validated actions">
         {config ? (
           <div className="stack-list">
+            <div className="inline-row">
+              <span>Active Target View</span>
+              <strong>{selectedTarget}</strong>
+            </div>
+            <div className="inline-row">
+              <span>Default Runtime Target</span>
+              <strong>{config.defaultTarget}</strong>
+            </div>
+            <div className="inline-row">
+              <span>Target Enabled</span>
+              <StatusBadge
+                tone={config.domains[selectedTarget].enabled ? "success" : "danger"}
+                label={config.domains[selectedTarget].enabled ? "enabled" : "disabled"}
+              />
+            </div>
             <div className="inline-row">
               <span>Mode</span>
               <StatusBadge

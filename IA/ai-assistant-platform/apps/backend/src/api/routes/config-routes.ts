@@ -9,6 +9,7 @@ import { ApplicationServices } from "../../shared/service-container";
 
 const connectionTestRequestSchema = z.object({
   target: z.enum(["database", "openai", "whatsapp"]),
+  domainTarget: z.enum(["business_brain", "pms"]).optional(),
   candidateConfig: z.any().optional()
 });
 

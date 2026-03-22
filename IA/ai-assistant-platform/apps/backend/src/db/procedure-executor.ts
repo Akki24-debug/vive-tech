@@ -23,7 +23,7 @@ export class ProcedureExecutor {
       throw new ValidationError("This action cannot be executed as a stored procedure.");
     }
 
-    const pool = await this.mariaDbPool.getPool();
+    const pool = await this.mariaDbPool.getPool(definition.target);
     const inputs = definition.procedure.mapArguments(parsedArguments, request);
 
     if (definition.procedure.kind === "standard") {

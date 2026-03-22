@@ -25,7 +25,7 @@ export function decryptSecret(value?: string): string {
 
   const [ivHex, tagHex, encryptedHex] = value.split(":");
 
-  if (!ivHex || !tagHex || !encryptedHex) {
+  if (!ivHex || !tagHex || encryptedHex === undefined) {
     throw new ConfigurationError("Invalid encrypted secret format.");
   }
 

@@ -8,6 +8,7 @@ type ExecutionMode = "read" | "write";
 
 export interface ActionExecutionResult {
   actionName: string;
+  target: AssistantRequest["target"];
   mode: ExecutionMode;
   sources: string[];
   data: unknown;
@@ -18,6 +19,18 @@ export class ActionExecutionService {
   constructor(private readonly procedureExecutor: ProcedureExecutor) {}
 
   async execute(
+    definition: ActionDefinition,
+    parsedArguments: Record<string, unknown>,
+    request: AssistantRequest
+  ): Promise<ActionExecutionResult> {
+    if (definition.target === "pms") {
+      return this.executePms(definition, parsedArguments, request);
+    }
+
+    return this.executeBusinessBrain(definition, parsedArguments, request);
+  }
+
+  private async executePms(
     definition: ActionDefinition,
     parsedArguments: Record<string, unknown>,
     request: AssistantRequest
@@ -40,6 +53,106 @@ export class ActionExecutionService {
       default:
         return this.executeRawProcedure(definition, parsedArguments, request);
     }
+  }
+
+  private async executeBusinessBrain(
+    definition: ActionDefinition,
+    parsedArguments: Record<string, unknown>,
+    request: AssistantRequest
+  ): Promise<ActionExecutionResult> {
+    if (definition.name === "brain.current_context") {
+      return this.executeBrainCurrentContext(parsedArguments, request);
+    }
+
+    const execution = await this.procedureExecutor.execute(definition, parsedArguments, request);
+    const rows = this.asRows(execution.recordsets[0]);
+
+    return {
+      actionName: definition.name,
+      target: definition.target,
+      mode: definition.mode === "write" ? "write" : "read",
+      sources: [execution.procedureName],
+      data:
+        definition.mode === "read"
+          ? {
+              filtersApplied: parsedArguments,
+              rows,
+              rowCount: rows.length
+            }
+          : rows[0] ?? null,
+      raw: execution
+    };
+  }
+
+  private async executeBrainCurrentContext(
+    parsedArguments: Record<string, unknown>,
+    request: AssistantRequest
+  ): Promise<ActionExecutionResult> {
+    const lookupNames = [
+      "brain.organization.lookup",
+      "brain.business_area.lookup",
+      "brain.business_line.lookup",
+      "brain.business_priority.lookup",
+      "brain.objective.lookup",
+      "brain.external_system.lookup",
+      "brain.knowledge_document.lookup"
+    ] as const;
+
+    const definitions = lookupNames.map((name) => getActionDefinition(request.target, name));
+
+    if (definitions.some((definition) => !definition)) {
+      throw new ValidationError("Required Business Brain lookup actions are not registered.");
+    }
+
+    const [organization, businessAreas, businessLines, priorities, objectives, externalSystems, documents] =
+      await Promise.all(
+        definitions.map((definition) =>
+          this.executeBusinessBrain(
+            definition!,
+            {
+              organizationId: this.asOptionalNumber(parsedArguments.organizationId),
+              search: this.asOptionalString(parsedArguments.search),
+              onlyActive: parsedArguments.onlyActive,
+              limit: this.asOptionalNumber(parsedArguments.limit)
+            },
+            request
+          )
+        )
+      );
+
+    return {
+      actionName: "brain.current_context",
+      target: request.target,
+      mode: "read",
+      sources: [
+        ...organization.sources,
+        ...businessAreas.sources,
+        ...businessLines.sources,
+        ...priorities.sources,
+        ...objectives.sources,
+        ...externalSystems.sources,
+        ...documents.sources
+      ],
+      data: {
+        filtersApplied: parsedArguments,
+        organization: organization.data,
+        businessAreas: businessAreas.data,
+        businessLines: businessLines.data,
+        priorities: priorities.data,
+        objectives: objectives.data,
+        externalSystems: externalSystems.data,
+        knowledgeDocuments: documents.data
+      },
+      raw: {
+        organization: organization.raw ?? null,
+        businessAreas: businessAreas.raw ?? null,
+        businessLines: businessLines.raw ?? null,
+        priorities: priorities.raw ?? null,
+        objectives: objectives.raw ?? null,
+        externalSystems: externalSystems.raw ?? null,
+        knowledgeDocuments: documents.raw ?? null
+      }
+    };
   }
 
   private async executeAvailabilitySearch(
@@ -65,6 +178,7 @@ export class ActionExecutionService {
 
     return {
       actionName: definition.name,
+      target: definition.target,
       mode: "read",
       sources: [execution.procedureName],
       data: {
@@ -101,6 +215,7 @@ export class ActionExecutionService {
 
     return {
       actionName: definition.name,
+      target: definition.target,
       mode: "read",
       sources: [execution.procedureName],
       data: {
@@ -124,6 +239,7 @@ export class ActionExecutionService {
 
     return {
       actionName: definition.name,
+      target: definition.target,
       mode: "read",
       sources: [execution.procedureName],
       data: {
@@ -153,6 +269,7 @@ export class ActionExecutionService {
 
     return {
       actionName: definition.name,
+      target: definition.target,
       mode: "read",
       sources: [execution.procedureName],
       data: {
@@ -179,6 +296,7 @@ export class ActionExecutionService {
 
     return {
       actionName: definition.name,
+      target: definition.target,
       mode: "read",
       sources: [execution.procedureName],
       data: {
@@ -238,6 +356,7 @@ export class ActionExecutionService {
 
     return {
       actionName: definition.name,
+      target: definition.target,
       mode: "read",
       sources: [execution.procedureName],
       data: {
@@ -267,8 +386,8 @@ export class ActionExecutionService {
     parsedArguments: Record<string, unknown>,
     request: AssistantRequest
   ): Promise<ActionExecutionResult> {
-    const propertyDefinition = getActionDefinition("property.lookup");
-    const reservationDefinition = getActionDefinition("reservation.lookup");
+    const propertyDefinition = getActionDefinition(request.target, "property.lookup");
+    const reservationDefinition = getActionDefinition(request.target, "reservation.lookup");
 
     if (!propertyDefinition || !reservationDefinition) {
       throw new ValidationError("Required lookup actions are not registered for current state.");
@@ -297,6 +416,7 @@ export class ActionExecutionService {
 
     return {
       actionName: "operations.current_state",
+      target: request.target,
       mode: "read",
       sources: [...propertyResult.sources, ...reservationResult.sources],
       data: {
@@ -328,6 +448,7 @@ export class ActionExecutionService {
 
     return {
       actionName: definition.name,
+      target: definition.target,
       mode: definition.mode === "write" ? "write" : "read",
       sources: [execution.procedureName],
       data: {

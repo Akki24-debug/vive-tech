@@ -4,6 +4,8 @@ export type ExecutionMode = "auto" | "manual" | "hybrid";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "executed";
 
+export type AssistantTarget = "business_brain" | "pms";
+
 export type ConnectionTestTarget = "database" | "openai" | "whatsapp";
 
 export type RequiredDocumentKey =
@@ -13,27 +15,39 @@ export type RequiredDocumentKey =
   | "permissions"
   | "company_context";
 
+export type SharedDocumentKey = "platform_overview" | "target_routing";
+
+export interface TargetAssistantRuntimeInput {
+  companyCode: string;
+  defaultLocale?: string;
+  defaultPropertyCode?: string;
+  defaultActorUserId: number;
+  whatsappActorUserId?: number;
+  whatsappRolesCsv?: string;
+  whatsappPermissionsCsv?: string;
+}
+
+export interface TargetDatabaseRuntimeInput {
+  host: string;
+  port: number;
+  user: string;
+  password?: string;
+  database: string;
+  connectionLimit?: number;
+  ssl?: boolean;
+}
+
+export interface TargetRuntimeConfigInput {
+  enabled: boolean;
+  docsDirectory?: string;
+  assistant: TargetAssistantRuntimeInput;
+  database: TargetDatabaseRuntimeInput;
+}
+
 export interface RuntimeConfigInput {
   tenantId: string;
-  docsDirectory?: string;
-  assistant: {
-    companyCode: string;
-    defaultLocale?: string;
-    defaultPropertyCode?: string;
-    defaultActorUserId: number;
-    whatsappActorUserId?: number;
-    whatsappRolesCsv?: string;
-    whatsappPermissionsCsv?: string;
-  };
-  database: {
-    host: string;
-    port: number;
-    user: string;
-    password?: string;
-    database: string;
-    connectionLimit?: number;
-    ssl?: boolean;
-  };
+  defaultTarget?: AssistantTarget;
+  domains: Record<AssistantTarget, TargetRuntimeConfigInput>;
   openai: {
     apiKey?: string;
     model: string;
@@ -55,27 +69,52 @@ export interface RuntimeConfigInput {
   };
 }
 
-export interface DecryptedRuntimeConfig {
-  tenantId: string;
+export interface TargetAssistantRuntimeConfig {
+  companyCode: string;
+  defaultLocale: string;
+  defaultPropertyCode?: string;
+  defaultActorUserId: number;
+  whatsappActorUserId: number;
+  whatsappRolesCsv: string;
+  whatsappPermissionsCsv: string;
+}
+
+export interface TargetDatabaseRuntimeConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+  connectionLimit: number;
+  ssl: boolean;
+}
+
+export interface TargetDecryptedRuntimeConfig {
+  enabled: boolean;
   docsDirectory: string;
-  assistant: {
-    companyCode: string;
-    defaultLocale: string;
-    defaultPropertyCode?: string;
-    defaultActorUserId: number;
-    whatsappActorUserId: number;
-    whatsappRolesCsv: string;
-    whatsappPermissionsCsv: string;
-  };
+  assistant: TargetAssistantRuntimeConfig;
+  database: TargetDatabaseRuntimeConfig;
+}
+
+export interface TargetSanitizedRuntimeConfig {
+  enabled: boolean;
+  docsDirectory: string;
+  assistant: TargetAssistantRuntimeConfig;
   database: {
     host: string;
     port: number;
     user: string;
-    password: string;
     database: string;
     connectionLimit: number;
     ssl: boolean;
+    hasPassword: boolean;
   };
+}
+
+export interface DecryptedRuntimeConfig {
+  tenantId: string;
+  defaultTarget: AssistantTarget;
+  domains: Record<AssistantTarget, TargetDecryptedRuntimeConfig>;
   openai: {
     apiKey: string;
     model: string;
@@ -100,25 +139,8 @@ export interface DecryptedRuntimeConfig {
 
 export interface SanitizedRuntimeConfig {
   tenantId: string;
-  docsDirectory: string;
-  assistant: {
-    companyCode: string;
-    defaultLocale: string;
-    defaultPropertyCode?: string;
-    defaultActorUserId: number;
-    whatsappActorUserId: number;
-    whatsappRolesCsv: string;
-    whatsappPermissionsCsv: string;
-  };
-  database: {
-    host: string;
-    port: number;
-    user: string;
-    database: string;
-    connectionLimit: number;
-    ssl: boolean;
-    hasPassword: boolean;
-  };
+  defaultTarget: AssistantTarget;
+  domains: Record<AssistantTarget, TargetSanitizedRuntimeConfig>;
   openai: {
     model: string;
     baseUrl?: string;
@@ -142,11 +164,12 @@ export interface SanitizedRuntimeConfig {
 }
 
 export interface DocumentDescriptor {
-  key: RequiredDocumentKey;
+  key: RequiredDocumentKey | SharedDocumentKey;
   title: string;
   path: string;
   exists: boolean;
   size: number;
+  target?: AssistantTarget | "shared";
   lastModifiedAt?: string;
   content?: string;
 }
@@ -161,6 +184,7 @@ export interface ActionProposal {
 }
 
 export interface ActionCatalogEntry {
+  target: AssistantTarget;
   name: string;
   description: string;
   executable: boolean;
@@ -172,6 +196,7 @@ export interface ActionCatalogEntry {
 
 export interface AssistantRequest {
   tenantId: string;
+  target: AssistantTarget;
   companyCode: string;
   conversationId: string;
   userId: string;
@@ -195,6 +220,7 @@ export interface AssistantResponse {
 export interface ApprovalRecord {
   id: string;
   tenantId: string;
+  target: AssistantTarget;
   conversationId: string;
   status: ApprovalStatus;
   requestContext: Omit<AssistantRequest, "message">;
@@ -205,6 +231,7 @@ export interface ApprovalRecord {
   procedureName?: string;
   actionProposal: ActionProposal;
   executionPreview: {
+    target: AssistantTarget;
     procedureName?: string;
     arguments: Record<string, unknown>;
     mode: "read" | "write" | "none";
@@ -214,11 +241,13 @@ export interface ApprovalRecord {
 
 export interface ConnectionTestRequest {
   target: ConnectionTestTarget;
+  domainTarget?: AssistantTarget;
   candidateConfig?: Partial<RuntimeConfigInput>;
 }
 
 export interface ConnectionTestResult {
   target: ConnectionTestTarget;
+  domainTarget?: AssistantTarget;
   success: boolean;
   details: string;
   durationMs: number;
@@ -234,6 +263,7 @@ export interface ConversationMessage {
 export interface ConversationRecord {
   id: string;
   tenantId: string;
+  target: AssistantTarget;
   channel: ChannelType;
   userId: string;
   summary: string;
@@ -248,5 +278,6 @@ export interface LogEvent {
   level: "info" | "warn" | "error";
   message: string;
   timestamp: string;
+  target?: AssistantTarget | "shared";
   payload?: unknown;
 }

@@ -1,15 +1,19 @@
-import { LogEvent } from "@vlv-ai/shared";
+import { AssistantTarget, LogEvent } from "@vlv-ai/shared";
 
 import { SectionCard } from "../../components/SectionCard";
 import { StatusBadge } from "../../components/StatusBadge";
 
 interface LogsPanelProps {
   logs: LogEvent[];
+  selectedTarget: AssistantTarget;
 }
 
-export function LogsPanel({ logs }: LogsPanelProps) {
+export function LogsPanel({ logs, selectedTarget }: LogsPanelProps) {
   return (
-    <SectionCard title="Operational Logs" subtitle="Recent structured events captured by the backend">
+    <SectionCard
+      title="Operational Logs"
+      subtitle={`Recent structured events captured for ${selectedTarget}`}
+    >
       <div className="table-list">
         {logs.map((event) => (
           <article className="table-list__row table-list__row--stacked" key={event.id}>
@@ -19,6 +23,7 @@ export function LogsPanel({ logs }: LogsPanelProps) {
                 label={event.level}
               />
               <strong>{event.type}</strong>
+              <span>{event.target ?? "shared"}</span>
               <span>{event.timestamp}</span>
             </div>
             <p>{event.message}</p>

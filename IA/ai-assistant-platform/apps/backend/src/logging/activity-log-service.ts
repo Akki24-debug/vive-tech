@@ -1,4 +1,4 @@
-import { LogEvent } from "@vlv-ai/shared";
+import { AssistantTarget, LogEvent } from "@vlv-ai/shared";
 
 import { paths } from "../config/paths";
 import { createId } from "../shared/ids";
@@ -10,13 +10,15 @@ export class ActivityLogService {
     level: "info" | "warn" | "error",
     type: string,
     message: string,
-    payload?: unknown
+    payload?: unknown,
+    target?: AssistantTarget | "shared"
   ): Promise<void> {
     const event: LogEvent = {
       id: createId("log"),
       level,
       type,
       message,
+      target,
       payload,
       timestamp: nowIso()
     };
@@ -27,16 +29,31 @@ export class ActivityLogService {
     writer(`[${event.timestamp}] ${level.toUpperCase()} ${type}: ${message}`);
   }
 
-  async info(type: string, message: string, payload?: unknown): Promise<void> {
-    await this.log("info", type, message, payload);
+  async info(
+    type: string,
+    message: string,
+    payload?: unknown,
+    target?: AssistantTarget | "shared"
+  ): Promise<void> {
+    await this.log("info", type, message, payload, target);
   }
 
-  async warn(type: string, message: string, payload?: unknown): Promise<void> {
-    await this.log("warn", type, message, payload);
+  async warn(
+    type: string,
+    message: string,
+    payload?: unknown,
+    target?: AssistantTarget | "shared"
+  ): Promise<void> {
+    await this.log("warn", type, message, payload, target);
   }
 
-  async error(type: string, message: string, payload?: unknown): Promise<void> {
-    await this.log("error", type, message, payload);
+  async error(
+    type: string,
+    message: string,
+    payload?: unknown,
+    target?: AssistantTarget | "shared"
+  ): Promise<void> {
+    await this.log("error", type, message, payload, target);
   }
 
   async listRecent(limit = 100): Promise<LogEvent[]> {
