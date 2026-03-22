@@ -25,9 +25,11 @@
 - If an upsert needs identifiers or required fields, request clarification first.
 - Bootstrap writes may use actor user id `0` only where the underlying SP explicitly allows it.
 - Do not describe a write as completed unless the backend result confirms it.
+- Organization scope is not user input in this console; it is resolved internally for Vive la Vibe.
 
 ## Response Expectations
 
 - Prefer concise operational summaries.
 - When listing data, group by entity and call out counts, names, and statuses first.
 - For broad state questions, prefer `brain.current_context`.
+- Do not ask for organization scope or mention alternate organizations.

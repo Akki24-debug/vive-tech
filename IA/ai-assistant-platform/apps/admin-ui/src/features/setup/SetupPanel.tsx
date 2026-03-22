@@ -5,6 +5,14 @@ import { AssistantTarget, RuntimeConfigInput, SanitizedRuntimeConfig } from "@vl
 import { SectionCard } from "../../components/SectionCard";
 import { ConnectionTestsPanel } from "../testing/ConnectionTestsPanel";
 
+const openAiModelOptions = [
+  { value: "gpt-5", label: "gpt-5" },
+  { value: "gpt-5-mini", label: "gpt-5-mini" },
+  { value: "gpt-5-nano", label: "gpt-5-nano" },
+  { value: "gpt-4.1", label: "gpt-4.1" },
+  { value: "gpt-4.1-mini", label: "gpt-4.1-mini" }
+] as const;
+
 interface SetupPanelProps {
   form: RuntimeConfigInput;
   selectedTarget: AssistantTarget;
@@ -382,7 +390,7 @@ export function SetupPanel({
             </label>
             <label>
               <span>Model</span>
-              <input
+              <select
                 className="input"
                 value={form.openai.model}
                 onChange={(event) =>
@@ -394,12 +402,19 @@ export function SetupPanel({
                     }
                   })
                 }
-              />
+              >
+                {openAiModelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
               <span>Base URL</span>
               <input
                 className="input"
+                placeholder="Leave blank for official OpenAI"
                 value={form.openai.baseUrl ?? ""}
                 onChange={(event) =>
                   onChange({

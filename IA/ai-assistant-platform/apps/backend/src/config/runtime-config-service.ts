@@ -240,7 +240,7 @@ export class RuntimeConfigService {
             : existing?.openai.apiKeyEncrypted,
         model: parsed.openai.model,
         baseUrl: parsed.openai.baseUrl,
-        timeoutMs: parsed.openai.timeoutMs ?? 30_000
+        timeoutMs: parsed.openai.timeoutMs ?? 120_000
       },
       whatsapp: {
         provider: parsed.whatsapp.provider,
@@ -292,7 +292,7 @@ export class RuntimeConfigService {
           apiKeyEncrypted: parsed.openai?.apiKeyEncrypted,
           model: parsed.openai?.model ?? "gpt-5",
           baseUrl: parsed.openai?.baseUrl,
-          timeoutMs: parsed.openai?.timeoutMs ?? 30_000
+          timeoutMs: parsed.openai?.timeoutMs ?? 120_000
         },
         whatsapp: {
           provider: parsed.whatsapp?.provider ?? "meta-cloud",
@@ -333,7 +333,7 @@ export class RuntimeConfigService {
         apiKeyEncrypted: legacy.openai?.apiKeyEncrypted,
         model: legacy.openai?.model ?? "gpt-5",
         baseUrl: legacy.openai?.baseUrl,
-        timeoutMs: legacy.openai?.timeoutMs ?? 30_000
+        timeoutMs: legacy.openai?.timeoutMs ?? 120_000
       },
       whatsapp: {
         provider: legacy.whatsapp?.provider ?? "meta-cloud",

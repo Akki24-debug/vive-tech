@@ -111,6 +111,7 @@ npm run dev:admin
 ## More docs
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
+- [docs/shared/server_operations_guide.md](./docs/shared/server_operations_guide.md)
 - [SETUP_LOCAL.md](./SETUP_LOCAL.md)
 - [WHATSAPP_META_CLOUD.md](./WHATSAPP_META_CLOUD.md)
 - [DEPLOY_HOSTINGER.md](./DEPLOY_HOSTINGER.md)

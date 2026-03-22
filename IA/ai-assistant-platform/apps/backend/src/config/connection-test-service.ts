@@ -209,7 +209,7 @@ export class ConnectionTestService {
         apiKey: candidateConfig.openai?.apiKey ?? existing?.openai.apiKey ?? "",
         model: candidateConfig.openai?.model ?? existing?.openai.model ?? "gpt-5",
         baseUrl: candidateConfig.openai?.baseUrl ?? existing?.openai.baseUrl,
-        timeoutMs: candidateConfig.openai?.timeoutMs ?? existing?.openai.timeoutMs ?? 30_000
+        timeoutMs: candidateConfig.openai?.timeoutMs ?? existing?.openai.timeoutMs ?? 120_000
       },
       whatsapp: {
         provider: candidateConfig.whatsapp?.provider ?? existing?.whatsapp.provider ?? "meta-cloud",
@@ -297,7 +297,7 @@ export class ConnectionTestService {
         apiKey: mergedInput.openai.apiKey ?? "",
         model: mergedInput.openai.model,
         baseUrl: mergedInput.openai.baseUrl,
-        timeoutMs: mergedInput.openai.timeoutMs ?? 30_000
+        timeoutMs: mergedInput.openai.timeoutMs ?? 120_000
       },
       whatsapp: {
         provider: mergedInput.whatsapp.provider,
@@ -352,7 +352,7 @@ export class ConnectionTestService {
     await client.responses.create({
       model: config.openai.model,
       input: "Connection test. Reply with OK.",
-      max_output_tokens: 8
+      max_output_tokens: 16
     });
   }
 }

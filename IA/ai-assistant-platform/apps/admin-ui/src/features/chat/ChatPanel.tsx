@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import {
   AssistantRequest,
@@ -29,6 +29,15 @@ interface ChatDraft {
   permissionsCsv: string;
   message: string;
 }
+
+interface PendingExchange {
+  userMessage: string;
+  createdAt: string;
+}
+
+type DisplayMessage = ConversationRecord["messages"][number] & {
+  pending?: boolean;
+};
 
 const suggestedPermissionsByTarget: Record<AssistantTarget, string> = {
   business_brain: [
@@ -69,8 +78,11 @@ export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps
   const [conversation, setConversation] = useState<ConversationRecord | null>(null);
   const [recentConversations, setRecentConversations] = useState<ConversationRecord[]>([]);
   const [lastResponse, setLastResponse] = useState<AssistantResponse | null>(null);
+  const [pendingExchange, setPendingExchange] = useState<PendingExchange | null>(null);
+  const [thinkingFrame, setThinkingFrame] = useState(0);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const conversationId = localStorage.getItem(`vlv-ai-conversation-id:${selectedTarget}`);
@@ -90,6 +102,29 @@ export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps
     localStorage.setItem(`vlv-ai-conversation-id:${selectedTarget}`, draft.conversationId);
     void loadConversation(draft.conversationId);
   }, [draft.conversationId, selectedTarget]);
+
+  useEffect(() => {
+    if (!pendingExchange) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setThinkingFrame((current) => (current + 1) % 4);
+    }, 480);
+
+    return () => window.clearInterval(interval);
+  }, [pendingExchange]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      chatBottomRef.current?.scrollIntoView({
+        block: "end",
+        behavior: pendingExchange ? "smooth" : "auto"
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [displayMessageCount(conversation, pendingExchange), pendingExchange, lastResponse]);
 
   async function refreshConversations(target: AssistantTarget): Promise<void> {
     const response = await api.getConversations(12, target);
@@ -116,6 +151,16 @@ export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps
     setSending(true);
     setError("");
 
+    const submittedMessage = draft.message.trim();
+    setPendingExchange({
+      userMessage: submittedMessage,
+      createdAt: new Date().toISOString()
+    });
+    setDraft((current) => ({
+      ...current,
+      message: ""
+    }));
+
     try {
       const domain = config.domains[selectedTarget];
       const payload: AssistantRequest = {
@@ -125,7 +170,7 @@ export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps
         conversationId: draft.conversationId,
         userId: draft.userId,
         actorUserId: draft.actorUserId,
-        message: draft.message.trim(),
+        message: submittedMessage,
         propertyCode: draft.propertyCode || undefined,
         locale: draft.locale || undefined,
         channel: draft.channel,
@@ -135,16 +180,30 @@ export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps
 
       const response = await api.sendAssistantMessage(payload);
       setLastResponse(response);
-      setDraft((current) => ({
-        ...current,
-        message: ""
-      }));
+      setPendingExchange(null);
       await loadConversation(draft.conversationId);
       await refreshConversations(selectedTarget);
     } catch (caughtError) {
+      setPendingExchange(null);
+      setDraft((current) => ({
+        ...current,
+        message: current.message || submittedMessage
+      }));
       setError(caughtError instanceof Error ? caughtError.message : "Request failed.");
     } finally {
       setSending(false);
+    }
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key === "Enter" && event.ctrlKey) {
+      event.preventDefault();
+
+      if (sending || !configured || !draft.message.trim()) {
+        return;
+      }
+
+      void handleSubmit(event as unknown as FormEvent);
     }
   }
 
@@ -157,8 +216,31 @@ export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps
     }));
     setConversation(null);
     setLastResponse(null);
+    setPendingExchange(null);
     setError("");
   }
+
+  const displayMessages: DisplayMessage[] = [
+    ...(conversation?.messages ?? []),
+    ...(pendingExchange
+      ? [
+          {
+            id: "pending-user",
+            role: "user" as const,
+            content: pendingExchange.userMessage,
+            createdAt: pendingExchange.createdAt
+          },
+          {
+            id: "pending-assistant",
+            role: "assistant" as const,
+            content: buildThinkingCopy(thinkingFrame),
+            createdAt: pendingExchange.createdAt,
+            pending: true
+          }
+        ]
+      : [])
+  ];
+  const isEmptyChatState = displayMessages.length === 0 && !lastResponse;
 
   return (
     <div className="panel-grid panel-grid--chat">
@@ -330,37 +412,68 @@ export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps
             </div>
           </div>
 
-          <div className="chat-main">
-            <div className="chat-messages">
-              {conversation?.messages.map((message: ConversationRecord["messages"][number]) => (
-                <article
-                  className={
-                    message.role === "user"
-                      ? "chat-message chat-message--user"
-                      : "chat-message chat-message--assistant"
-                  }
-                  key={message.id}
-                >
-                  <header className="inline-row">
-                    <strong>{message.role}</strong>
-                    <small>{message.createdAt}</small>
-                  </header>
-                  <p>{message.content}</p>
-                </article>
-              ))}
-              {!conversation?.messages.length ? (
-                <div className="chat-empty">
-                  <p>The conversation is empty. Send the first message from this console.</p>
+          <div className={isEmptyChatState ? "chat-main chat-main--empty" : "chat-main"}>
+            {isEmptyChatState ? (
+              <div className="chat-boot-panel">
+                <div className="chat-console-meta">
+                  <span>{selectedTarget}</span>
+                  <span>console://admin</span>
+                  <span>ai_state=idle</span>
                 </div>
-              ) : null}
-            </div>
+                <div className="chat-empty__content">
+                  <strong>console ready</strong>
+                  <p>Send the first operational command to start the session.</p>
+                  <div className="chat-empty__hints">
+                    <span>estado actual de vive la vibe</span>
+                    <span>reparto de trabajo por areas</span>
+                    <span>prioridades activas del negocio</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="chat-messages">
+                <div className="chat-console-meta">
+                  <span>{selectedTarget}</span>
+                  <span>console://admin</span>
+                  <span>{sending ? "ai_state=thinking" : "ai_state=idle"}</span>
+                </div>
+                {displayMessages.map((message) => (
+                  <article
+                    className={
+                      message.role === "user"
+                        ? "chat-message chat-message--user"
+                        : message.pending
+                          ? "chat-message chat-message--assistant chat-message--thinking"
+                          : "chat-message chat-message--assistant"
+                    }
+                    key={message.id}
+                  >
+                    <header className="inline-row">
+                      <strong>{message.role === "user" ? "operator" : "assistant-core"}</strong>
+                      <small>{message.createdAt}</small>
+                    </header>
+                    <p>{message.content}</p>
+                    {message.pending ? (
+                      <div className="thinking-signal" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+                <div ref={chatBottomRef} />
+              </div>
+            )}
 
             <label className="chat-composer">
-              <span>Message</span>
+              <span>Command Payload</span>
               <textarea
                 className="input input--multiline"
                 rows={5}
+                placeholder="describe la consulta o instruccion operativa..."
                 value={draft.message}
+                onKeyDown={handleComposerKeyDown}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, message: event.target.value }))
                 }
@@ -369,7 +482,7 @@ export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps
 
             <div className="button-row">
               <button className="button" disabled={sending || !configured} type="submit">
-                {sending ? "Sending..." : "Send message"}
+                Queue command
               </button>
               {error ? <span className="feedback feedback--error">{error}</span> : null}
             </div>
@@ -409,6 +522,24 @@ export function ChatPanel({ configured, config, selectedTarget }: ChatPanelProps
       </SectionCard>
     </div>
   );
+}
+
+function buildThinkingCopy(frame: number): string {
+  const phases = [
+    "signal accepted // routing through vive_la_vibe_brain",
+    "signal accepted // reading context graph",
+    "signal accepted // correlating procedures and records",
+    "signal accepted // generating response packet"
+  ];
+
+  return phases[frame] ?? phases[0];
+}
+
+function displayMessageCount(
+  conversation: ConversationRecord | null,
+  pendingExchange: PendingExchange | null
+): number {
+  return (conversation?.messages.length ?? 0) + (pendingExchange ? 2 : 0);
 }
 
 function createDraft(

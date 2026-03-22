@@ -19,9 +19,14 @@ export function AppShell({ activeView, onViewChange, children }: AppShellProps) 
     <div className="app-shell">
       <aside className="app-shell__sidebar">
         <div className="brand-block">
-          <p className="brand-block__eyebrow">AI Orchestration</p>
+          <p className="brand-block__eyebrow">AI Orchestration Layer</p>
           <h1>VLV Assistant Console</h1>
-          <p>Stored-procedure gateway, docs-driven prompts, approvals, and channel operations.</p>
+          <p>Stored-procedure gateway, docs-driven prompts, approvals, dual-target routing, and channel operations.</p>
+          <div className="brand-block__chips">
+            <span>dual-target</span>
+            <span>sp-gateway</span>
+            <span>ops-console</span>
+          </div>
         </div>
         <nav className="nav-list">
           {views.map(([key, label]) => (

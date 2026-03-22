@@ -77,7 +77,13 @@ export class ProcedureExecutor {
           return entry;
         }
 
-        return entry.map((row) => ({ ...(row as Record<string, unknown>) }));
+        return entry.map((row) => {
+          if (!row || typeof row !== "object") {
+            return row;
+          }
+
+          return { ...(row as Record<string, unknown>) };
+        });
       });
   }
 }

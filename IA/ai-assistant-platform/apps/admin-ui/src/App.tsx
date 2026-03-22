@@ -72,7 +72,7 @@ const defaultConfig: RuntimeConfigInput = {
     apiKey: "",
     model: "gpt-5",
     baseUrl: "",
-    timeoutMs: 30000
+    timeoutMs: 120000
   },
   whatsapp: {
     provider: "meta-cloud",
@@ -145,33 +145,41 @@ export default function App() {
   }
 
   async function handleSave(): Promise<void> {
-    const payload = buildPayload(form, config);
-    const response = await api.saveConfig(payload);
-    setConfig(response.config);
-    setFeedback("Configuration saved.");
-    setSelectedTarget(response.config.defaultTarget);
-    await refresh();
+    try {
+      const payload = buildPayload(form, config);
+      const response = await api.saveConfig(payload);
+      setConfig(response.config);
+      setFeedback("Configuration saved.");
+      setSelectedTarget(response.config.defaultTarget);
+      await refresh();
+    } catch (caughtError) {
+      setFeedback(caughtError instanceof Error ? caughtError.message : "Failed to save configuration.");
+    }
   }
 
   async function handleTest(
     target: "database" | "openai" | "whatsapp",
     domainTarget?: AssistantTarget
   ): Promise<void> {
-    const payload = buildPayload(form, config);
-    const response = await api.testConnection({
-      target,
-      domainTarget,
-      candidateConfig: payload
-    });
-    setLatestTests((current) => ({
-      ...current,
-      [target]: response.result
-    }));
-    setFeedback(
-      target === "database" && domainTarget
-        ? `${target} test completed for ${domainTarget}.`
-        : `${target} test completed.`
-    );
+    try {
+      const payload = buildPayload(form, config);
+      const response = await api.testConnection({
+        target,
+        domainTarget,
+        candidateConfig: payload
+      });
+      setLatestTests((current) => ({
+        ...current,
+        [target]: response.result
+      }));
+      setFeedback(
+        target === "database" && domainTarget
+          ? `${target} test completed for ${domainTarget}.`
+          : `${target} test completed.`
+      );
+    } catch (caughtError) {
+      setFeedback(caughtError instanceof Error ? caughtError.message : `Failed to test ${target}.`);
+    }
   }
 
   async function handleApprove(approvalId: string): Promise<void> {

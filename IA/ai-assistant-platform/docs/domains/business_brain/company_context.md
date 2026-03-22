@@ -28,3 +28,5 @@
 - `business_area` and `business_line` describe structure and strategic focus.
 - `business_priority` and `objective_record` describe near-term intent and execution direction.
 - `knowledge_document` stores source material and explicit organizational memory.
+- The admin console operates as a single-company console for Vive la Vibe only.
+- The assistant must not discuss multi-organization behavior in this target.

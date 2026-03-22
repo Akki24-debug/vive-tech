@@ -16,7 +16,7 @@ const actionProposalSchema = {
       "intent",
       "confidence",
       "action",
-      "arguments",
+      "argumentsJson",
       "summary",
       "needsHumanApproval"
     ],
@@ -32,9 +32,8 @@ const actionProposalSchema = {
       action: {
         type: "string"
       },
-      arguments: {
-        type: "object",
-        additionalProperties: true
+      argumentsJson: {
+        type: "string"
       },
       summary: {
         type: "string"
@@ -83,6 +82,12 @@ export class ActionProposalService {
                 "If the user request lacks required information, choose conversation.clarify.",
                 "Only use actions belonging to the request target.",
                 "Prefer the narrowest read action that can answer the request. Use a composite snapshot action only when the user is asking for a broad state question.",
+                "Return action arguments as a JSON string in argumentsJson. If no arguments are needed, return '{}'.",
+                "This admin console is permanently scoped to Vive la Vibe as a single organization.",
+                "Never ask the user for organizationId.",
+                "Never mention other organizations, multi-organization choices, or organization scope selection.",
+                "For business_brain, if an action supports organizationId, assume the backend will resolve the single organization automatically.",
+                "Only choose conversation.clarify when a truly required input is missing for the selected action.",
                 "",
                 `## Active Target\n${request.target}`,
                 "",
@@ -135,10 +140,10 @@ export class ActionProposalService {
       throw new ValidationError("OpenAI returned an empty action proposal.");
     }
 
-    let parsed: ActionProposal;
+    let parsed: ActionProposal & { argumentsJson?: string };
 
     try {
-      parsed = JSON.parse(payload) as ActionProposal;
+      parsed = JSON.parse(payload) as ActionProposal & { argumentsJson?: string };
     } catch (error) {
       await this.activityLogService.error("ai.action_proposal.parse_failed", "Failed to parse AI action proposal.", {
         payload,
@@ -147,6 +152,29 @@ export class ActionProposalService {
       throw new ValidationError("The action proposal response could not be parsed.", {
         payload
       });
+    }
+
+    if (typeof parsed.argumentsJson === "string") {
+      try {
+        parsed.arguments = parsed.argumentsJson.trim() ? JSON.parse(parsed.argumentsJson) : {};
+      } catch (error) {
+        await this.activityLogService.error(
+          "ai.action_proposal.arguments_parse_failed",
+          "Failed to parse action proposal arguments JSON.",
+          {
+            argumentsJson: parsed.argumentsJson,
+            error: error instanceof Error ? error.message : "unknown"
+          },
+          request.target
+        );
+        throw new ValidationError("The action proposal arguments could not be parsed.", {
+          argumentsJson: parsed.argumentsJson
+        });
+      }
+    }
+
+    if (!parsed.arguments || typeof parsed.arguments !== "object" || Array.isArray(parsed.arguments)) {
+      parsed.arguments = {};
     }
 
     await this.activityLogService.info("ai.action_proposal.created", "Created structured action proposal.", {

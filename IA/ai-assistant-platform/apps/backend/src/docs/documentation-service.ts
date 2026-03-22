@@ -4,9 +4,7 @@ import path from "node:path";
 import {
   AssistantTarget,
   DocumentDescriptor,
-  REQUIRED_DOCUMENTS,
   RequiredDocumentKey,
-  SHARED_DOCUMENTS,
   SharedDocumentKey
 } from "@vlv-ai/shared";
 
@@ -14,6 +12,19 @@ import { paths } from "../config/paths";
 import { RuntimeConfigService } from "../config/runtime-config-service";
 
 type DocumentKey = RequiredDocumentKey | SharedDocumentKey;
+
+const REQUIRED_DOCUMENTS: Record<RequiredDocumentKey, string> = {
+  business_rules: "business_rules.md",
+  stored_procedures: "stored_procedures.md",
+  assistant_behavior: "assistant_behavior.md",
+  permissions: "permissions.md",
+  company_context: "company_context.md"
+};
+
+const SHARED_DOCUMENTS: Record<SharedDocumentKey, string> = {
+  platform_overview: "platform_overview.md",
+  target_routing: "target_routing.md"
+};
 
 interface DocumentCacheEntry {
   descriptor: DocumentDescriptor;

@@ -4,6 +4,7 @@ import { RuntimeConfigService } from "../config/runtime-config-service";
 import { AuthorizationService } from "../auth/authorization-service";
 import { ConfigurationError, ValidationError } from "../shared/errors";
 import { ActionDefinition, getActionDefinition } from "./action-registry";
+import { BusinessBrainScopeResolver } from "./business-brain-scope-resolver";
 
 export interface ValidatedAction {
   definition: ActionDefinition;
@@ -14,7 +15,8 @@ export interface ValidatedAction {
 export class ActionPolicyEngine {
   constructor(
     private readonly runtimeConfigService: RuntimeConfigService,
-    private readonly authorizationService: AuthorizationService
+    private readonly authorizationService: AuthorizationService,
+    private readonly businessBrainScopeResolver: BusinessBrainScopeResolver
   ) {}
 
   async validateProposal(
@@ -49,7 +51,8 @@ export class ActionPolicyEngine {
 
     this.authorizationService.assertActionAllowed(request, definition.requiredPermissions);
 
-    const parsedArguments = definition.argsSchema.parse(proposal.arguments);
+    const preparedArguments = await this.prepareArguments(request, definition, proposal.arguments);
+    const parsedArguments = definition.argsSchema.parse(preparedArguments);
 
     if (request.target === "pms" && request.actorUserId <= 0 && definition.executable) {
       throw new ValidationError("PMS actions require a positive actor user id.");
@@ -104,5 +107,55 @@ export class ActionPolicyEngine {
     }
 
     return false;
+  }
+
+  private async prepareArguments(
+    request: AssistantRequest,
+    definition: ActionDefinition,
+    value: unknown
+  ): Promise<unknown> {
+    const normalized = this.normalizeNullishArguments(value);
+
+    if (
+      request.target !== "business_brain" ||
+      !normalized ||
+      typeof normalized !== "object" ||
+      Array.isArray(normalized)
+    ) {
+      return normalized;
+    }
+
+    if (!("organizationId" in definition.argsSchema.shape)) {
+      return normalized;
+    }
+
+    const current = normalized as Record<string, unknown>;
+
+    if (typeof current.organizationId === "number" && Number.isFinite(current.organizationId)) {
+      return current;
+    }
+
+    const organizationId = await this.businessBrainScopeResolver.resolveDefaultOrganizationId();
+
+    return {
+      ...current,
+      organizationId
+    };
+  }
+
+  private normalizeNullishArguments(value: unknown): unknown {
+    if (Array.isArray(value)) {
+      return value.map((entry) => this.normalizeNullishArguments(entry));
+    }
+
+    if (!value || typeof value !== "object") {
+      return value === null ? undefined : value;
+    }
+
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== null)
+        .map(([key, entry]) => [key, this.normalizeNullishArguments(entry)])
+    );
   }
 }

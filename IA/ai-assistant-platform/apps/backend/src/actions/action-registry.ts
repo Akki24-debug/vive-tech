@@ -322,7 +322,7 @@ const businessBrainDefinitions: ActionDefinition[] = [
     target: "business_brain",
     name: "brain.current_context",
     description:
-      "Build an operational snapshot of the current business brain context: organization, business areas, lines, priorities, objectives, systems, and knowledge docs.",
+      "Build an operational snapshot of the current business brain context: organization, business areas, lines, priorities, objectives, systems, and knowledge docs. organizationId is optional.",
     executable: true,
     mode: "read",
     requiredPermissions: ["brain.read.context"],
@@ -336,7 +336,7 @@ const businessBrainDefinitions: ActionDefinition[] = [
   {
     target: "business_brain",
     name: "brain.organization.lookup",
-    description: "Look up organizations stored in the business brain.",
+    description: "Look up organizations stored in the business brain. organizationId is optional.",
     executable: true,
     mode: "read",
     requiredPermissions: ["brain.read.organization"],

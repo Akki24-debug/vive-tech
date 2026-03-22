@@ -15,13 +15,22 @@ The assistant must only choose from the `business_brain` catalog.
   - `sp_objective_record_data`
   - `sp_external_system_data`
   - `sp_knowledge_document_data`
+- Inputs:
+  - internal organization scope is auto-resolved by the backend when needed
+  - optional `search`
+  - optional `onlyActive`
+  - optional `limit`
+- Routing note:
+  - if the user asks broadly about Vive la Vibe, do not clarify for organization scope; execute directly
 
 ## Core Read Actions
 
 ### `brain.organization.lookup`
 
 - Procedure: `sp_organization_data`
-- Inputs: optional `id`, optional `organizationId`, optional `search`, optional `onlyActive`, optional `limit`
+- Inputs: optional `id`, optional `search`, optional `onlyActive`, optional `limit`
+- Routing note:
+  - organization scope is internal and must not be requested from the user
 
 ### `brain.user_account.lookup`
 

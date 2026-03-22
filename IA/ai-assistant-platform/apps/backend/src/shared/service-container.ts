@@ -1,6 +1,7 @@
 import { ActionExecutionService } from "../actions/action-execution-service";
 import { ActionPolicyEngine } from "../actions/action-policy-engine";
 import { listActionCatalog } from "../actions/action-registry";
+import { BusinessBrainScopeResolver } from "../actions/business-brain-scope-resolver";
 import { AssistantTarget } from "@vlv-ai/shared";
 import { ActionProposalService } from "../ai/action-proposal-service";
 import { AssistantOrchestrator } from "../ai/assistant-orchestrator";
@@ -39,9 +40,14 @@ export function createApplicationServices(): ApplicationServices {
   const activityLogService = new ActivityLogService();
   const conversationStore = new ConversationStore();
   const authorizationService = new AuthorizationService();
-  const actionPolicyEngine = new ActionPolicyEngine(runtimeConfigService, authorizationService);
   const approvalService = new ApprovalService();
   const mariaDbPool = new MariaDbPool(runtimeConfigService);
+  const businessBrainScopeResolver = new BusinessBrainScopeResolver(mariaDbPool);
+  const actionPolicyEngine = new ActionPolicyEngine(
+    runtimeConfigService,
+    authorizationService,
+    businessBrainScopeResolver
+  );
   const procedureExecutor = new ProcedureExecutor(mariaDbPool);
   const actionExecutionService = new ActionExecutionService(procedureExecutor);
   const openAIClientFactory = new OpenAIClientFactory(runtimeConfigService);

@@ -40,6 +40,15 @@ export function createApp(services: ApplicationServices) {
     }
 
     const typed = error instanceof Error ? error : new Error("Unknown error");
+    void services.activityLogService.error(
+      "app.unhandled_error",
+      "Unhandled backend error.",
+      {
+        message: typed.message,
+        stack: typed.stack
+      },
+      "shared"
+    );
     response.status(500).json({
       error: {
         code: "UNHANDLED_ERROR",
