@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $version = "11.8.3"
 $serviceName = "MariaDB"
-$repoRoot = "C:\Users\ragnarok\Documents\repos\vive-tech-tools\windows"
+$repoRoot = $PSScriptRoot
 $downloadDir = Join-Path $repoRoot "downloads"
 $backupDir = Join-Path $repoRoot "mariadb-backups"
 $zipName = "mariadb-11.8.3-winx64.zip"

@@ -4,15 +4,17 @@ Repositorio unico de trabajo para el ecosistema de Vive La Vibe.
 
 ## Carpetas canonicas
 
-- `PMS/`: PMS, SQL, migraciones, playbooks y scripts locales del PMS.
-- `IA/`: plataforma de IA, docs operativas, GPTs y contexto sincronizado del PMS.
+- `Core de Operaciones/`: PMS, base operativa del PMS y pagina publica de Vive La Vibe.
+- `AI Assistant platform/`: backend Node, admin UI y docs de runtime del asistente.
+- `cerebro de la empresa/`: base del cerebro empresarial y documentos relacionados.
 - `tools/`: utilidades locales, PHP portable, scripts Windows y herramientas internas.
-- `vivelavibe.pxm.com.mx/`: sitio publico y endpoints web ligados al dominio.
+- `vive la food/`: espacio reservado para comida, entregas y app partners.
+- `marketing/`: espacio reservado para materiales y activos de marketing.
 
 ## Estado actual
 
 - La raiz Git real es esta carpeta: `Proyecto VLV/`.
-- Las carpetas duplicadas `vive-tech-tools`, `vive-tech-pms` y `vive-tech-ai` ya salieron del arbol activo.
+- La estructura fue reorganizada por dominios operativos y ya no usa las rutas antiguas `PMS/`, `IA/` ni `vivelavibe.pxm.com.mx/` como carpetas canonicas.
 - Se respaldaron fuera del repo en:
   - `C:\Users\ragnarok\Documents\repos\_repo_consolidation_backups\20260321-103022`
 

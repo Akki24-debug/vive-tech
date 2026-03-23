@@ -9,21 +9,22 @@ Desktop.ini
 *.log
 *.tmp
 *.temp
-IA/ai-assistant-platform/storage/runtime/
-IA/ai-assistant-platform/apps/backend/storage/
+AI Assistant platform/storage/runtime/
+AI Assistant platform/apps/backend/storage/
 
 # Env / secrets
 .env
 .env.*
 !.env.example
+!**/.env.example
 LOCAL_DB_ACCESS.md
 config.local.php
 config.php.local
 *.pem
 *.key
-PMS/public_html/pms db connections/config.php
-PMS/public_html/ai tunnel/config.php
-vivelavibe.pxm.com.mx/credentials.js
+Core de Operaciones/PMS/public_html/pms db connections/config.php
+Core de Operaciones/PMS/public_html/ai tunnel/config.php
+Core de Operaciones/pagina de vive la vibe/credentials.js
 
 # Node
 node_modules/
@@ -45,9 +46,9 @@ __pycache__/
 *.tar
 *.gz
 *.rar
-PMS/Backups/
-PMS/bd pms/Codex Installer.exe
-PMS/bd pms/Microsoft.Services.Store.winmd
+Core de Operaciones/PMS/Backups/
+Core de Operaciones/bd/Codex Installer.exe
+Core de Operaciones/bd/Microsoft.Services.Store.winmd
 tools/windows/logs/
 tools/windows/mariadb-backups/
 tools/windows/downloads/mariadb-11.8.3-extract/

@@ -6,7 +6,7 @@ Para este proyecto conviene usar **un solo repositorio** con raiz en `Proyecto V
 
 No recomiendo separar por Git en este momento porque:
 
-- `PMS/`, `IA/`, `tools/` y `vivelavibe.pxm.com.mx/` estan fuertemente conectados;
+- `Core de Operaciones/`, `AI Assistant platform/`, `cerebro de la empresa/` y `tools/` estan fuertemente conectados;
 - necesitas cambiar contratos entre carpetas con frecuencia;
 - tu friccion actual no viene por "demasiado codigo en un repo", sino por copias, rutas duplicadas y falta de proceso;
 - un solo repo te deja ver el cambio completo cuando una mejora toca varias areas.
