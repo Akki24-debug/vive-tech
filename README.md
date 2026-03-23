@@ -22,6 +22,7 @@ Repositorio unico de trabajo para el ecosistema de Vive La Vibe.
 
 - [WORKSPACE_CONTROL_TOWER.md](c:\Users\ragnarok\Documents\repos\Proyecto%20VLV\WORKSPACE_CONTROL_TOWER.md)
 - [CANONICAL_SOURCES.md](c:\Users\ragnarok\Documents\repos\Proyecto%20VLV\CANONICAL_SOURCES.md)
+- [GUI_BASELINE.md](c:\Users\ragnarok\Documents\repos\Proyecto%20VLV\GUI_BASELINE.md)
 - [REPO_WORKFLOW.md](c:\Users\ragnarok\Documents\repos\Proyecto%20VLV\REPO_WORKFLOW.md)
 - [GIT_QUICK_GUIDE.md](c:\Users\ragnarok\Documents\repos\Proyecto%20VLV\GIT_QUICK_GUIDE.md)
 

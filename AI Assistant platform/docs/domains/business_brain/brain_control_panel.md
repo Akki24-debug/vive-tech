@@ -19,6 +19,7 @@ It does **not** ask for `organizationId` in the UI. The backend resolves the act
 - Backend service: `apps/backend/src/brain-admin/brain-admin-service.ts`
 - Backend routes: `apps/backend/src/api/routes/brain-admin-routes.ts`
 - Resource registry: `apps/backend/src/brain-admin/brain-admin-registry.ts`
+- Global GUI behavior baseline: [`GUI_BASELINE.md`](../../../../GUI_BASELINE.md)
 
 ## UX Structure
 
@@ -44,6 +45,14 @@ Operational patterns:
 - right-side drawer for `view`, `edit`, and `create`
 - direct writes with confirmation
 - single-organization language only
+
+Required baseline for this panel:
+
+- `Save` must never be silent
+- drawer save must show visible progress and visible completion
+- drawer close must protect unsaved changes
+- successful saves must rehydrate from backend and preserve list context
+- feedback must appear inside the drawer, not only in a distant global area
 
 ## Module Coverage
 

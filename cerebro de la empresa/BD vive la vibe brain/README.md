@@ -24,10 +24,11 @@ Si el objetivo es aprender como funciona `BD vive la vibe brain` o darsela a otr
 modelo para explicacion guiada, este es el orden recomendado:
 
 1. `docs/BUSINESS_BRAIN_SCHEMA_WALKTHROUGH.md`
-2. `README.md`
-3. `docs/seed_mapping.md`
-4. `docs/BUSINESS_BRAIN_SQL_SP_REFERENCE.md`
-5. `schema/001_business_brain_schema.sql`
+2. `docs/BUSINESS_BRAIN_VOICE_REVIEW_BRIEF.md`
+3. `README.md`
+4. `docs/seed_mapping.md`
+5. `docs/BUSINESS_BRAIN_SQL_SP_REFERENCE.md`
+6. `schema/001_business_brain_schema.sql`
 
 Regla practica:
 

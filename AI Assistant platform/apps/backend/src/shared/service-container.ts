@@ -24,6 +24,7 @@ import { MariaDbPool } from "../db/mariadb-pool";
 import { ProcedureExecutor } from "../db/procedure-executor";
 import { DocumentationService } from "../docs/documentation-service";
 import { ActivityLogService } from "../logging/activity-log-service";
+import { PmsMobileService } from "../mobile/pms-mobile-service";
 
 export interface ApplicationServices {
   runtimeConfigService: RuntimeConfigService;
@@ -34,6 +35,7 @@ export interface ApplicationServices {
   actionPolicyEngine: ActionPolicyEngine;
   approvalService: ApprovalService;
   procedureExecutor: ProcedureExecutor;
+  pmsMobileService: PmsMobileService;
   brainAdminService: BrainAdminService;
   assistantOrchestrator: AssistantOrchestrator;
   whatsappService: WhatsAppService;
@@ -67,6 +69,7 @@ export function createApplicationServices(): ApplicationServices {
     domainHealthService
   );
   const procedureExecutor = new ProcedureExecutor(mariaDbPool);
+  const pmsMobileService = new PmsMobileService(mariaDbPool, activityLogService);
   const brainAdminService = new BrainAdminService(
     runtimeConfigService,
     mariaDbPool,
@@ -121,6 +124,7 @@ export function createApplicationServices(): ApplicationServices {
     actionPolicyEngine,
     approvalService,
     procedureExecutor,
+    pmsMobileService,
     brainAdminService,
     assistantOrchestrator,
     whatsappService,

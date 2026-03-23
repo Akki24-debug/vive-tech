@@ -50,6 +50,8 @@ interface DrawerState {
   id: number | null;
   open: boolean;
   loading: boolean;
+  busyAction: string | null;
+  notice: string;
   item: Record<string, unknown> | null;
   related: Record<string, unknown> | null;
   formValues: Record<string, unknown>;
@@ -363,6 +365,8 @@ export function BrainControlPanel({
       id: id ?? null,
       open: true,
       loading: mode !== "create",
+      busyAction: null,
+      notice: "",
       item: null,
       related: null,
       formValues: emptyValues,
@@ -413,7 +417,8 @@ export function BrainControlPanel({
 
   function hydrateDrawer(
     detail: BrainAdminDetailResponse,
-    mode: "view" | "edit" | "create"
+    mode: "view" | "edit" | "create",
+    notice = ""
   ): void {
     const item = detail.item ?? null;
     const related = detail.related ?? null;
@@ -425,6 +430,8 @@ export function BrainControlPanel({
       id: Number(item?.id ?? 0) || null,
       open: true,
       loading: false,
+      busyAction: null,
+      notice,
       item,
       related,
       formValues: nextFormValues,
@@ -452,6 +459,10 @@ export function BrainControlPanel({
   }
 
   function closeDrawer(): void {
+    if (drawer?.busyAction) {
+      return;
+    }
+
     if (drawer && hasUnsavedChanges(drawer) && !window.confirm("Descartar cambios sin guardar?")) {
       return;
     }
@@ -461,7 +472,15 @@ export function BrainControlPanel({
   }
 
   function switchDrawerMode(mode: "view" | "edit" | "create"): void {
-    setDrawer((current) => (current ? { ...current, mode } : current));
+    setDrawer((current) =>
+      current
+        ? {
+            ...current,
+            mode,
+            notice: mode === "edit" ? "" : current.notice
+          }
+        : current
+    );
   }
 
   function updateDrawerField(key: string, value: unknown): void {
@@ -469,6 +488,7 @@ export function BrainControlPanel({
       current
         ? {
             ...current,
+            notice: "",
             formValues: {
               ...current.formValues,
               [key]: value
@@ -490,6 +510,15 @@ export function BrainControlPanel({
     }
 
     try {
+      setDrawer((current) =>
+        current
+          ? {
+              ...current,
+              busyAction: "save",
+              notice: ""
+            }
+          : current
+      );
       const result = await api.saveBrainAdminResource(
         drawer.resource,
         {
@@ -503,8 +532,18 @@ export function BrainControlPanel({
       if (activeModule !== "overview") {
         await loadModule(activeModule);
       }
-      hydrateDrawer(result, "edit");
+      hydrateDrawer(result, "view", "Registro guardado. Datos rehidratados desde el backend.");
     } catch (caughtError) {
+      setDrawer((current) =>
+        current
+          ? {
+              ...current,
+              busyAction: null,
+              notice:
+                caughtError instanceof Error ? caughtError.message : "No se pudo guardar."
+            }
+          : current
+      );
       setFeedback(caughtError instanceof Error ? caughtError.message : "No se pudo guardar.");
     }
   }
@@ -1069,6 +1108,7 @@ export function BrainControlPanel({
                 {drawer.mode === "view" && drawer.id ? (
                   <button
                     className="button button--secondary"
+                    disabled={Boolean(drawer.busyAction)}
                     onClick={() => switchDrawerMode("edit")}
                     type="button"
                   >
@@ -1085,17 +1125,31 @@ export function BrainControlPanel({
                   </button>
                 ) : null}
                 {drawer.mode !== "view" ? (
-                  <button className="button" onClick={() => void saveDrawer()} type="button">
-                    Save
+                  <button
+                    className="button"
+                    disabled={
+                      Boolean(drawer.busyAction) ||
+                      (drawer.mode !== "create" && !hasUnsavedChanges(drawer))
+                    }
+                    onClick={() => void saveDrawer()}
+                    type="button"
+                  >
+                    {drawer.busyAction === "save" ? "Saving..." : "Save"}
                   </button>
                 ) : null}
-                <button className="button button--ghost" onClick={closeDrawer} type="button">
+                <button
+                  className="button button--ghost"
+                  disabled={Boolean(drawer.busyAction)}
+                  onClick={closeDrawer}
+                  type="button"
+                >
                   Close
                 </button>
               </div>
             </div>
 
             <div className="brain-control__drawer-body">
+              {drawer.notice ? <p className="brain-control__banner">{drawer.notice}</p> : null}
               {drawer.loading ? (
                 <EmptyState
                   title="Cargando detalle"

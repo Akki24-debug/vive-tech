@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "PMS Mobile",
+    "slug": "vlv-pms-mobile",
+    "scheme": "vlvpmsmobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.vivelavibe.pmsmobile"
+    },
+    "android": {
+      "package": "com.vivelavibe.pmsmobile"
+    }
+  }
+}

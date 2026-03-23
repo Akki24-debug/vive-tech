@@ -16,6 +16,7 @@ Cada tema debe tener una sola fuente canonica. Las copias derivadas pueden exist
 | Sitio publico Vive La Vibe | `Core de Operaciones/pagina de vive la vibe/` | Frontend y endpoints del dominio publico |
 | Cerebro empresarial | `cerebro de la empresa/BD vive la vibe brain/` | Base versionada y documentacion del cerebro de la empresa |
 | Documentos historicos o anexos del cerebro | `cerebro de la empresa/otros documentos/` | Material de apoyo, historico o contexto no operativo |
+| Baseline global de GUI | `GUI_BASELINE.md` | Contrato minimo de comportamiento para drawers, modales, CRUDs y dashboards |
 | Tools locales | `tools/` | Scripts Windows, binarios portables y herramientas internas |
 | Iniciativas Vive la Food | `vive la food/` | Carpetas reservadas por linea operativa |
 | Marketing | `marketing/` | Materiales y activos de marketing |

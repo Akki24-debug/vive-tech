@@ -299,6 +299,148 @@ export interface LogEvent {
   payload?: unknown;
 }
 
+export interface MobilePmsRequestContext {
+  tenantId: string;
+  companyCode: string;
+  userId: string;
+  actorUserId: number;
+  locale?: string;
+}
+
+export interface AvailabilityFilters {
+  propertyCode: string | null;
+  dateStart: string;
+  dateEnd: string | null;
+  nights: number | null;
+  people: number | null;
+  visibleWindowDays: number;
+}
+
+export interface ReservationDraftPreview {
+  source: "mobile.availability.phase1";
+  action:
+    | "book_requested_stay"
+    | "book_one_night"
+    | "book_continuous_stay";
+  tenantId: string;
+  companyCode: string;
+  actorUserId: number;
+  propertyCode: string;
+  propertyName: string;
+  roomCode: string;
+  roomName: string;
+  categoryCode: string;
+  categoryName: string;
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+  people: number | null;
+  currency: string;
+  nightlyPriceCents: number | null;
+  totalCents: number | null;
+  visibleContinuousNights: number;
+}
+
+export interface AvailabilityRoomAction {
+  kind:
+    | "book_requested_stay"
+    | "book_one_night"
+    | "book_continuous_stay";
+  label: string;
+  draft: ReservationDraftPreview;
+}
+
+export interface AvailabilityRoomCard {
+  propertyCode: string;
+  propertyName: string;
+  roomCode: string;
+  roomName: string;
+  roomId: number;
+  categoryCode: string;
+  categoryName: string;
+  categoryId: number;
+  requestedStartDate: string;
+  visibleContinuousNights: number;
+  requestedNights: number | null;
+  people: number | null;
+  currency: string;
+  nightlyPriceCents: number | null;
+  requestedStayTotalCents: number | null;
+  continuousStayTotalCents: number | null;
+  capacityTotal: number | null;
+  maxAdults: number | null;
+  maxChildren: number | null;
+  actions: AvailabilityRoomAction[];
+}
+
+export interface AvailabilityPropertyGroup {
+  propertyCode: string;
+  propertyName: string;
+  currency: string;
+  roomCount: number;
+  rooms: AvailabilityRoomCard[];
+}
+
+export interface MobilePmsBootstrapProperty {
+  id: number;
+  code: string;
+  name: string;
+  currency: string;
+}
+
+export interface MobilePmsBootstrapCategory {
+  id: number;
+  propertyCode: string;
+  code: string;
+  name: string;
+  maxOccupancy: number | null;
+  rateplanId: number | null;
+}
+
+export interface MobilePmsBootstrapRoom {
+  id: number;
+  propertyCode: string;
+  code: string;
+  name: string;
+  categoryCode: string;
+  categoryName: string;
+  categoryId: number | null;
+  rateplanId: number | null;
+  capacityTotal: number | null;
+  maxAdults: number | null;
+  maxChildren: number | null;
+}
+
+export interface MobilePmsBootstrapBedConfiguration {
+  propertyCode: string;
+  roomCode: string;
+  label: string;
+}
+
+export interface MobilePmsBootstrapResponse {
+  context: {
+    tenantId: string;
+    companyCode: string;
+    actorUserId: number;
+    allowedPropertyCodes: string[];
+    permissionCodes: string[];
+    isOwner: boolean;
+    authzMode: "audit" | "enforce";
+  };
+  defaults: AvailabilityFilters;
+  properties: MobilePmsBootstrapProperty[];
+  categories: MobilePmsBootstrapCategory[];
+  rooms: MobilePmsBootstrapRoom[];
+  bedConfigurations: MobilePmsBootstrapBedConfiguration[];
+}
+
+export interface MobilePmsAvailabilityResponse {
+  context: MobilePmsBootstrapResponse["context"];
+  filtersApplied: AvailabilityFilters;
+  totalMatches: number;
+  groups: AvailabilityPropertyGroup[];
+}
+
 export type BrainAdminResourceKey =
   | "organization"
   | "user_account"

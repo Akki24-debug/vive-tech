@@ -9,6 +9,7 @@ import { createConversationRoutes } from "./api/routes/conversation-routes";
 import { createDocsRoutes } from "./api/routes/docs-routes";
 import { createHealthRoutes } from "./api/routes/health-routes";
 import { createLogRoutes } from "./api/routes/log-routes";
+import { createMobilePmsRoutes } from "./api/routes/mobile-pms-routes";
 import { createWhatsAppRoutes } from "./api/routes/whatsapp-routes";
 import { AppError } from "./shared/errors";
 import { ApplicationServices } from "./shared/service-container";
@@ -27,6 +28,7 @@ export function createApp(services: ApplicationServices) {
   app.use("/api", createConversationRoutes(services));
   app.use("/api", createApprovalRoutes(services));
   app.use("/api", createLogRoutes(services));
+  app.use("/api", createMobilePmsRoutes(services));
   app.use("/api", createWhatsAppRoutes(services));
 
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
